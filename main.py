@@ -1,43 +1,74 @@
-from flask import Flask, jsonify, request
+# main.py
+from flask import Flask, request, jsonify
+from datetime import datetime
+from firebase_admin import credentials, firestore, initialize_app
 import os
-import firebase_admin
-from firebase_admin import credentials, firestore
 
 app = Flask(__name__)
 
-# Optional: Load service account (for local dev or specific permission needs)
-if not firebase_admin._apps:
-    try:
-        cred_path = "service_account.json"
-        if os.path.exists(cred_path):
-            cred = credentials.Certificate(cred_path)
-            firebase_admin.initialize_app(cred)
-        else:
-            firebase_admin.initialize_app()  # Use default credentials (Cloud Run)
-        db = firestore.client()
-    except Exception as e:
-        print(f"Firestore init error: {e}")
-        db = None
+# Firebase 初始化
+if not firestore._apps:
+    cred = credentials.ApplicationDefault()
+    initialize_app(cred)
+db = firestore.client()
 
 
 @app.route("/")
 def index():
-    return "✅ GuaGuaBOT Cloud Run Ready"
+    return "GuaGuaBOT API is live"
 
 
-@app.route("/healthz")
-def health():
-    return jsonify({"status": "ok"}), 200
+@app.route("/redeem_submit", methods=["POST"])
+def redeem_submit():
+    data = request.get_json()
+    code = data.get("code")
+    ids = data.get("ids", [])
+    timestamp = datetime.now().isoformat()
+
+    if not code or not ids:
+        return jsonify({"error": "Missing code or ids"}), 400
+
+    results = []
+    for pid in ids:
+        result = {
+            "player_id": pid,
+            "code": code,
+            "result": "success",  # 模擬成功
+            "reason": "",
+            "datetime": timestamp,
+        }
+        # 🔐 寫入 Firestore
+        db.collection("redeem_logs").add(result)
+        results.append(result)
+
+    return jsonify({"results": results})
 
 
-@app.route("/firestore_test", methods=["POST"])
-def firestore_test():
-    if not db:
-        return jsonify({"error": "Firestore unavailable"}), 500
-    data = request.json or {}
-    doc_ref = db.collection("test_collection").document()
-    doc_ref.set({"message": data.get("message", "default"), "source": "cloud_run_test"})
-    return jsonify({"result": "success", "id": doc_ref.id})
+@app.route("/add_notify", methods=["POST"])
+def add_notify():
+    data = request.get_json()
+    guild_id = str(data.get("guild_id"))
+    dt_str = data.get("datetime")
+    message = data.get("message", "")
+    channel_id = data.get("channel_id")
+    mention = data.get("mention", "")
+
+    try:
+        dt = datetime.fromisoformat(dt_str)
+    except Exception:
+        return jsonify({"error": "Invalid datetime format"}), 400
+
+    db.collection("notifications").add(
+        {
+            "guild_id": guild_id,
+            "datetime": dt,
+            "message": message,
+            "mention": mention,
+            "channel_id": channel_id,
+        }
+    )
+
+    return jsonify({"status": "ok", "guild_id": guild_id})
 
 
 if __name__ == "__main__":
