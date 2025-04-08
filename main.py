@@ -1,14 +1,21 @@
+# main.py
+import os
+import requests
 from flask import Flask, request, jsonify
 from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
-import os
 
+# 初始化 Firebase
 if not firebase_admin._apps:
     cred = credentials.ApplicationDefault()
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
+# 環境變數設定
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+
+# Flask 應用
 app = Flask(__name__)
 
 
@@ -67,6 +74,17 @@ def notify_submit():
                 "datetime": datetime.fromisoformat(remind_at),
             }
         )
+
+        # 發送 Discord Webhook
+        if DISCORD_WEBHOOK_URL:
+            try:
+                resp = requests.post(
+                    DISCORD_WEBHOOK_URL, json={"content": message}, timeout=5
+                )
+                if resp.status_code != 204:
+                    print(f"⚠️ Webhook failed: {resp.status_code} {resp.text}")
+            except Exception as e:
+                print(f"❌ Webhook error: {e}")
 
         return jsonify({"message": "Notify task created"})
     except Exception as e:
