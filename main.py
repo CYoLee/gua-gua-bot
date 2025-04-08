@@ -1,17 +1,14 @@
-# main.py
 from flask import Flask, request, jsonify
 from datetime import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore
 import os
 
-import firebase_admin
-from firebase_admin import credentials, firestore, initialize_app
-
-# Firestore 初始化
 if not firebase_admin._apps:
     cred = credentials.ApplicationDefault()
-    initialize_app(cred)
-
+    firebase_admin.initialize_app(cred)
 db = firestore.client()
+
 app = Flask(__name__)
 
 
@@ -22,57 +19,59 @@ def index():
 
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
-    data = request.get_json()
-    code = data.get("code")
-    ids = data.get("ids", [])
-    batch_id = data.get("batch_id", "default")
+    try:
+        data = request.get_json(force=True)
+        print("Received redeem payload:", data)
+        code = data.get("code")
+        ids = data.get("ids", [])
+        batch_id = data.get("batch_id", "default")
 
-    if not code or not isinstance(ids, list):
-        return jsonify({"error": "Invalid payload"}), 400
+        if not code or not isinstance(ids, list):
+            return jsonify({"error": "Invalid payload"}), 400
 
-    timestamp = datetime.utcnow().isoformat()
-    result = []
+        timestamp = datetime.utcnow().isoformat()
+        result = []
 
-    for pid in ids:
-        doc = {
-            "player_id": pid,
-            "code": code,
-            "batch_id": batch_id,
-            "timestamp": timestamp,
-            "result": "simulated_success",
-        }
-        db.collection("redeem_logs").add(doc)
-        result.append({"player_id": pid, "status": "ok"})
+        for pid in ids:
+            doc = {
+                "player_id": pid,
+                "code": code,
+                "batch_id": batch_id,
+                "timestamp": timestamp,
+                "result": "simulated_success",
+            }
+            db.collection("redeem_logs").add(doc)
+            result.append({"player_id": pid, "status": "ok"})
 
-    return jsonify({"message": "Submitted", "result": result})
+        return jsonify({"message": "Submitted", "result": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/notify_submit", methods=["POST"])
 def notify_submit():
-    data = request.get_json()
-    message = data.get("message")
-    channel_id = data.get("channel_id")
-    guild_id = data.get("guild_id")
-    remind_at = data.get("datetime")
-
-    if not all([message, channel_id, guild_id, remind_at]):
-        return jsonify({"error": "Missing fields"}), 400
-
     try:
-        remind_time = datetime.fromisoformat(remind_at)
-    except ValueError:
-        return jsonify({"error": "Invalid datetime format"}), 400
+        data = request.get_json()
+        message = data.get("message")
+        channel_id = data.get("channel_id")
+        guild_id = data.get("guild_id")
+        remind_at = data.get("datetime")
 
-    db.collection("notifications").add(
-        {
-            "message": message,
-            "channel_id": channel_id,
-            "guild_id": guild_id,
-            "datetime": remind_time,
-        }
-    )
+        if not all([message, channel_id, guild_id, remind_at]):
+            return jsonify({"error": "Missing fields"}), 400
 
-    return jsonify({"message": "Notify task created"})
+        db.collection("notifications").add(
+            {
+                "message": message,
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "datetime": datetime.fromisoformat(remind_at),
+            }
+        )
+
+        return jsonify({"message": "Notify task created"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
