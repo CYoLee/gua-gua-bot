@@ -32,8 +32,9 @@ tree = bot.tree
 async def on_ready():
     print(f"✅ Bot is online as {bot.user}")
     try:
-        synced = await tree.sync()
-        print(f"✅ Synced {len(synced)} commands.")
+        guild_id = os.getenv("GUILD_ID")
+        synced = await tree.sync(guild=discord.Object(id=guild_id))
+        print(f"✅ Synced {len(synced)} command(s) to guild {guild_id}")
     except Exception as e:
         print(f"❌ Sync failed: {e}")
 
