@@ -1,74 +1,78 @@
 # main.py
 from flask import Flask, request, jsonify
+import firebase_admin
+from firebase_admin import credentials, firestore
 from datetime import datetime
-from firebase_admin import credentials, firestore, initialize_app
+import pytz
 import os
 
-app = Flask(__name__)
-
-# Firebase 初始化
-if not firestore._apps:
+# Initialize Firebase
+if not firebase_admin._apps:
     cred = credentials.ApplicationDefault()
-    initialize_app(cred)
+    firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+app = Flask(__name__)
+TIMEZONE = pytz.timezone("Asia/Taipei")
 
 
 @app.route("/")
 def index():
-    return "GuaGuaBOT API is live"
+    return "✅ GuaGuaBOT Cloud Run Ready"
 
 
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
-    data = request.get_json()
-    code = data.get("code")
-    ids = data.get("ids", [])
-    timestamp = datetime.now().isoformat()
-
-    if not code or not ids:
-        return jsonify({"error": "Missing code or ids"}), 400
-
-    results = []
-    for pid in ids:
-        result = {
-            "player_id": pid,
-            "code": code,
-            "result": "success",  # 模擬成功
-            "reason": "",
-            "datetime": timestamp,
-        }
-        # 🔐 寫入 Firestore
-        db.collection("redeem_logs").add(result)
-        results.append(result)
-
-    return jsonify({"results": results})
-
-
-@app.route("/add_notify", methods=["POST"])
-def add_notify():
-    data = request.get_json()
-    guild_id = str(data.get("guild_id"))
-    dt_str = data.get("datetime")
-    message = data.get("message", "")
-    channel_id = data.get("channel_id")
-    mention = data.get("mention", "")
-
     try:
-        dt = datetime.fromisoformat(dt_str)
-    except Exception:
-        return jsonify({"error": "Invalid datetime format"}), 400
+        data = request.get_json()
+        code = data["code"]
+        ids = data["ids"]
+        batch_id = data.get("batch_id", "default")
+        timestamp = datetime.now().astimezone(TIMEZONE)
 
-    db.collection("notifications").add(
-        {
-            "guild_id": guild_id,
-            "datetime": dt,
-            "message": message,
-            "mention": mention,
-            "channel_id": channel_id,
-        }
-    )
+        for pid in ids:
+            db.collection("redeem_logs").add(
+                {
+                    "code": code,
+                    "player_id": pid,
+                    "batch_id": batch_id,
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                    "datetime": timestamp.isoformat(),
+                    "result": "success",
+                    "reason": "",
+                }
+            )
 
-    return jsonify({"status": "ok", "guild_id": guild_id})
+        return jsonify({"status": "ok", "processed": len(ids)})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/notify_submit", methods=["POST"])
+def notify_submit():
+    try:
+        data = request.get_json()
+        date = data["date"]
+        time = data["time"]
+        message = data["message"]
+        channel_id = data["channel_id"]
+        mention = data.get("mention", "")
+        guild_id = data.get("guild_id", "default")
+
+        dt = TIMEZONE.localize(datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M"))
+        db.collection("notifications").add(
+            {
+                "guild_id": str(guild_id),
+                "channel_id": channel_id,
+                "datetime": dt,
+                "mention": mention,
+                "message": message,
+            }
+        )
+
+        return jsonify({"status": "ok", "datetime": dt.isoformat()})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 if __name__ == "__main__":
