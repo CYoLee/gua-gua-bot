@@ -1,15 +1,17 @@
 # main.py
 from flask import Flask, request, jsonify
 from datetime import datetime
-from firebase_admin import credentials, firestore, initialize_app
 import os
 
-# Firestore 初始化（只初始化一次）
-if not firestore._apps:
+import firebase_admin
+from firebase_admin import credentials, firestore, initialize_app
+
+# Firestore 初始化
+if not firebase_admin._apps:
     cred = credentials.ApplicationDefault()
     initialize_app(cred)
-db = firestore.client()
 
+db = firestore.client()
 app = Flask(__name__)
 
 
@@ -56,12 +58,17 @@ def notify_submit():
     if not all([message, channel_id, guild_id, remind_at]):
         return jsonify({"error": "Missing fields"}), 400
 
+    try:
+        remind_time = datetime.fromisoformat(remind_at)
+    except ValueError:
+        return jsonify({"error": "Invalid datetime format"}), 400
+
     db.collection("notifications").add(
         {
             "message": message,
             "channel_id": channel_id,
             "guild_id": guild_id,
-            "datetime": datetime.fromisoformat(remind_at),
+            "datetime": remind_time,
         }
     )
 
