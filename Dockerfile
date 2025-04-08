@@ -1,15 +1,23 @@
-# Dockerfile
-
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# 複製程式碼進容器
+# 安裝系統相依套件：Chromium + Tesseract
+RUN apt-get update && apt-get install -y \
+    chromium-driver \
+    chromium \
+    tesseract-ocr \
+    tesseract-ocr-chi-tra \
+    fonts-wqy-zenhei \
+    && rm -rf /var/lib/apt/lists/*
+
+# 設定環境變數供 Selenium 使用 headless chrome
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+
 COPY . .
 
-# 安裝 Python 套件
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# 設定啟動指令（Flask 預設用環境變數讀取）
 CMD ["python", "main.py"]

@@ -1,4 +1,3 @@
-
 # redeem_bot.py
 import os
 import json
@@ -7,24 +6,23 @@ import aiohttp
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
-
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# 初始化環境變數
+# 載入環境變數
 load_dotenv()
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 REDEEM_API_URL = os.environ.get("REDEEM_API_URL")
 cred_json = json.loads(os.environ.get("FIREBASE_CREDENTIALS", "{}"))
-cred_json["private_key"] = cred_json["private_key"].replace("\n", "\n")
+cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
 
-# 初始化 Firebase
+# Firebase 初始化
 if not firebase_admin._apps:
     cred = credentials.Certificate(cred_json)
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Bot 初始化
+# Discord Bot 初始化
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
@@ -40,55 +38,66 @@ async def on_ready():
         print(f"❌ Sync failed: {e}")
 
 
-# /redeem 指令
-@tree.command(name="redeem", description="使用禮包碼對 Firestore 中的 ID 進行兌換")
-@app_commands.describe(code="輸入兌換碼")
-async def redeem(interaction: discord.Interaction, code: str):
+@tree.command(
+    name="redeem",
+    description="輸入兌換碼與 (選填) 單一 ID，否則使用 Firestore 中的 ID 清單",
+)
+@app_commands.describe(
+    code="禮包兌換碼", player_id="可選擇指定單一 ID 兌換，否則使用 Firestore 所有 ID"
+)
+async def redeem(interaction: discord.Interaction, code: str, player_id: str = ""):
     await interaction.response.defer(ephemeral=True)
+    batch_id = f"batch-{interaction.id}"
 
-    # 讀取 firestore 中 ids
-    docs = db.collection("ids").stream()
-    ids = [doc.id for doc in docs]
-
-    if not ids:
-        await interaction.followup.send(
-            "❌ 未找到任何 ID（請先建立 Firestore ids 集合）"
-        )
+    if not code:
+        await interaction.followup.send("❌ 請輸入有效兌換碼", ephemeral=True)
         return
 
-    # 傳送兌換請求到 Cloud Run
-    payload = {
-        "code": code,
-        "ids": ids,
-        "batch_id": f"batch-{interaction.id}",
-    }
-
-    async with aiohttp.ClientSession() as session:
+    # 取得 ID 列表：單人 or 多人
+    ids = []
+    if player_id:
+        ids = [player_id]
+    else:
         try:
-            async with session.post(
-                f"{REDEEM_API_URL}/redeem_submit",
-                json=payload,
-                timeout=30,
-            ) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    lines = [f"📦 Redeem `{code}` 執行完成"]
-                    for s in result.get("success", []):
-                        lines.append(f"✅ {s['player_id']} 成功")
-                    for f in result.get("failure", []):
-                        lines.append(f"❌ {f['player_id']} 失敗 ({f['reason']})")
-                    msg = "\n".join(lines)
-                else:
-                    msg = f"❌ Cloud Run 回應錯誤：{resp.status}"
-
+            doc = db.collection("config").document("ids").get()
+            data = doc.to_dict()
+            ids = data.get("list", [])
         except Exception as e:
-            msg = f"❌ 發送失敗：{e}"
+            await interaction.followup.send(f"❌ 讀取 ID 清單失敗: {e}", ephemeral=True)
+            return
 
-    await interaction.followup.send(f"```\n{msg[:1900]}\n```")
+    if not ids:
+        await interaction.followup.send("❌ 沒有找到任何可用的 ID", ephemeral=True)
+        return
+
+    # 傳送到 Cloud Run redeem_submit API
+    try:
+        payload = {"code": code, "ids": ids, "batch_id": batch_id}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{REDEEM_API_URL}/redeem_submit", json=payload, timeout=30
+            ) as resp:
+                if resp.status != 200:
+                    await interaction.followup.send(
+                        f"❌ API 回應錯誤: {resp.status}", ephemeral=True
+                    )
+                    return
+                result = await resp.json()
+    except Exception as e:
+        await interaction.followup.send(f"❌ API 發送失敗: {e}", ephemeral=True)
+        return
+
+    # 建立回覆訊息
+    lines = [f"📦 `{code}` 兌換結果："]
+    for s in result.get("success", []):
+        lines.append(f"✅ {s['player_id']} -> OK")
+    for f in result.get("failure", []):
+        lines.append(f"❌ {f['player_id']} -> {f.get('reason', 'Fail')}")
+
+    await interaction.followup.send(f"```\n{chr(10).join(lines)}\n```", ephemeral=True)
 
 
-# 啟動 Bot
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        raise RuntimeError("請設定 DISCORD_TOKEN 環境變數")
+        raise RuntimeError("❌ 環境變數 DISCORD_TOKEN 未設定")
     bot.run(DISCORD_TOKEN)
