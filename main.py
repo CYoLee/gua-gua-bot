@@ -5,7 +5,7 @@ from firebase_admin import credentials, firestore
 import os
 
 if not firebase_admin._apps:
-    cred = credentials.ApplicationDefault("serviceAccountKey.json")
+    cred = credentials.ApplicationDefault()
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
@@ -21,7 +21,6 @@ def index():
 def redeem_submit():
     try:
         data = request.get_json(force=True)
-        print("Received redeem payload:", data)
         code = data.get("code")
         ids = data.get("ids", [])
         batch_id = data.get("batch_id", "default")
