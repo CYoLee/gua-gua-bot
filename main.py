@@ -1,19 +1,16 @@
 # main.py
 from flask import Flask, request, jsonify
-import firebase_admin
-from firebase_admin import credentials, firestore
 from datetime import datetime
-import pytz
+from firebase_admin import credentials, firestore, initialize_app
 import os
 
-# Initialize Firebase
-if not firebase_admin._apps:
+# Firestore 初始化（只初始化一次）
+if not firestore._apps:
     cred = credentials.ApplicationDefault()
-    firebase_admin.initialize_app(cred)
+    initialize_app(cred)
 db = firestore.client()
 
 app = Flask(__name__)
-TIMEZONE = pytz.timezone("Asia/Taipei")
 
 
 @app.route("/")
@@ -23,56 +20,52 @@ def index():
 
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
-    try:
-        data = request.get_json()
-        code = data["code"]
-        ids = data["ids"]
-        batch_id = data.get("batch_id", "default")
-        timestamp = datetime.now().astimezone(TIMEZONE)
+    data = request.get_json()
+    code = data.get("code")
+    ids = data.get("ids", [])
+    batch_id = data.get("batch_id", "default")
 
-        for pid in ids:
-            db.collection("redeem_logs").add(
-                {
-                    "code": code,
-                    "player_id": pid,
-                    "batch_id": batch_id,
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                    "datetime": timestamp.isoformat(),
-                    "result": "success",
-                    "reason": "",
-                }
-            )
+    if not code or not isinstance(ids, list):
+        return jsonify({"error": "Invalid payload"}), 400
 
-        return jsonify({"status": "ok", "processed": len(ids)})
-    except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+    timestamp = datetime.utcnow().isoformat()
+    result = []
+
+    for pid in ids:
+        doc = {
+            "player_id": pid,
+            "code": code,
+            "batch_id": batch_id,
+            "timestamp": timestamp,
+            "result": "simulated_success",
+        }
+        db.collection("redeem_logs").add(doc)
+        result.append({"player_id": pid, "status": "ok"})
+
+    return jsonify({"message": "Submitted", "result": result})
 
 
 @app.route("/notify_submit", methods=["POST"])
 def notify_submit():
-    try:
-        data = request.get_json()
-        date = data["date"]
-        time = data["time"]
-        message = data["message"]
-        channel_id = data["channel_id"]
-        mention = data.get("mention", "")
-        guild_id = data.get("guild_id", "default")
+    data = request.get_json()
+    message = data.get("message")
+    channel_id = data.get("channel_id")
+    guild_id = data.get("guild_id")
+    remind_at = data.get("datetime")
 
-        dt = TIMEZONE.localize(datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M"))
-        db.collection("notifications").add(
-            {
-                "guild_id": str(guild_id),
-                "channel_id": channel_id,
-                "datetime": dt,
-                "mention": mention,
-                "message": message,
-            }
-        )
+    if not all([message, channel_id, guild_id, remind_at]):
+        return jsonify({"error": "Missing fields"}), 400
 
-        return jsonify({"status": "ok", "datetime": dt.isoformat()})
-    except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+    db.collection("notifications").add(
+        {
+            "message": message,
+            "channel_id": channel_id,
+            "guild_id": guild_id,
+            "datetime": datetime.fromisoformat(remind_at),
+        }
+    )
+
+    return jsonify({"message": "Notify task created"})
 
 
 if __name__ == "__main__":
