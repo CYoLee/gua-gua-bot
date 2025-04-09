@@ -118,4 +118,20 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
         raise RuntimeError("❌ 請設定 DISCORD_TOKEN")
+
+    import threading
+    from flask import Flask
+
+    # 啟動 Flask 用來通過 Cloud Run 健康檢查
+    def run_healthcheck():
+        app = Flask(__name__)
+
+        @app.route("/")
+        def ok():
+            return "✅ Discord Bot is alive!"
+
+        port = int(os.environ.get("PORT", 8080))
+        app.run(host="0.0.0.0", port=port)
+
+    threading.Thread(target=run_healthcheck, daemon=True).start()
     bot.run(DISCORD_TOKEN)
