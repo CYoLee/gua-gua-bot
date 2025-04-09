@@ -27,13 +27,19 @@ gcloud config set project $projectId
 Write-Host "`n=== Building Docker Image ==="
 gcloud builds submit --tag "gcr.io/$projectId/$serviceName"
 
-Write-Host "`n=== Deploying to Cloud Run ==="
+Write-Host "`n=== Fetching Latest Image SHA ==="
+$imageSha = gcloud artifacts docker images list gcr.io/$projectId/$serviceName `
+  --format="value(digest)" | Select-Object -First 1
+
+$image = "gcr.io/$projectId/$serviceName@$imageSha"
+
+Write-Host "`n=== Deploying to Cloud Run [$image] ==="
 gcloud run deploy $serviceName `
-  --image "gcr.io/$projectId/$serviceName" `
+  --image $image `
   --platform managed `
   --region $region `
   --allow-unauthenticated `
   --port 8080 `
-  --env-vars-file env.yaml
+  --env-vars-file .env.yaml
 
-Write-Host "`nDeployment completed successfully."
+Write-Host "`n Deployment completed successfully."
