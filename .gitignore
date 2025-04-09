@@ -64,6 +64,8 @@ node_modules/
 
 # dotenv environment variables file
 .env
+.env.yaml
+deploy.bat
 
 # dataconnect generated files
 .dataconnect

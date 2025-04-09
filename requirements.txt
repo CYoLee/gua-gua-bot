@@ -6,3 +6,5 @@ selenium==4.21.0
 pillow==10.2.0
 pytesseract==0.3.10
 webdriver-manager==4.0.1
+discord.py==2.3.2
+aiohttp==3.9.3
