@@ -1,11 +1,10 @@
 # flask_app.py
 import os
-import requests
+import json
 from flask import Flask, request, jsonify
 from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
-import json
 
 cred_json = json.loads(os.environ.get("FIREBASE_CREDENTIALS", "{}"))
 if "private_key" in cred_json:
@@ -79,9 +78,9 @@ def notify_submit():
 
         if DISCORD_WEBHOOK_URL:
             try:
-                resp = requests.post(
-                    DISCORD_WEBHOOK_URL, json={"content": message}, timeout=5
-                )
+                from requests import post
+
+                resp = post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=5)
                 if resp.status_code != 204:
                     print(f"⚠️ Webhook failed: {resp.status_code} {resp.text}")
             except Exception as e:
@@ -92,6 +91,6 @@ def notify_submit():
         return jsonify({"error": str(e)}), 500
 
 
-if __name__ == "__main__":
+def start_flask_app():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)

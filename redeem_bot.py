@@ -1,43 +1,26 @@
 # redeem_bot.py
-
 import os
 import json
 import discord
 import aiohttp
-from dotenv import load_dotenv
 from discord import app_commands
 from discord.ext import commands
-
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# ✅ 載入 .env 檔案變數
-load_dotenv()
-
-# 讀取環境變數
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 REDEEM_API_URL = os.environ.get("REDEEM_API_URL")
 GUILD_ID = os.environ.get("GUILD_ID")
-if not GUILD_ID:
-    raise RuntimeError("❌ GUILD_ID 環境變數未設定")
 
-guild = discord.Object(id=int(GUILD_ID))  # 這邊才轉換成 int
-
-
-# 解析 Firebase 憑證 JSON（處理原始 \n 換行符）
 cred_json = json.loads(os.environ.get("FIREBASE_CREDENTIALS", "{}"))
 if "private_key" in cred_json:
     cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
 
-print("[DEBUG] Firebase Credential JSON:", cred_json)
-
-# Firebase 初始化
 if not firebase_admin._apps:
     cred = credentials.Certificate(cred_json)
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Discord Bot 初始化
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
@@ -49,31 +32,22 @@ async def on_ready():
     try:
         guild = discord.Object(id=int(GUILD_ID))
         synced = await tree.sync(guild=guild)
-        print(f"✅ 指令已同步至 GUILD {GUILD_ID}（共 {len(synced)} 筆）")
+        print(f"✅ 已同步 {len(synced)} 個指令到 GUILD {GUILD_ID}")
     except Exception as e:
-        print(f"❌ 同步指令失敗: {e}")
+        print(f"❌ 同步失敗: {e}")
 
 
 @tree.command(
     name="redeem",
     description="輸入兌換碼與 (選填) 單一 ID，否則使用 Firestore 中 config.ids 清單",
 )
-@app_commands.describe(
-    code="禮包兌換碼",
-    player_id="單一 ID（選填）",
-)
+@app_commands.describe(code="禮包兌換碼", player_id="單一 ID（選填）")
 async def redeem(interaction: discord.Interaction, code: str, player_id: str = ""):
     await interaction.response.defer(ephemeral=True)
     batch_id = f"batch-{interaction.id}"
 
-    if not code:
-        await interaction.followup.send("❌ 請提供兌換碼", ephemeral=True)
-        return
-
-    # 取得 ID 列表
-    if player_id:
-        ids = [player_id]
-    else:
+    ids = [player_id] if player_id else []
+    if not ids:
         try:
             doc = db.collection("config").document("ids").get()
             data = doc.to_dict() or {}
@@ -86,14 +60,11 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
         await interaction.followup.send("❌ 無可用 ID", ephemeral=True)
         return
 
-    # 發送至 Cloud Run API
     try:
         payload = {"code": code, "ids": ids, "batch_id": batch_id}
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{REDEEM_API_URL}/redeem_submit",
-                json=payload,
-                timeout=30,
+                f"{REDEEM_API_URL}/redeem_submit", json=payload, timeout=30
             ) as resp:
                 if resp.status != 200:
                     await interaction.followup.send(
@@ -105,7 +76,6 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
         await interaction.followup.send(f"❌ 發送失敗: {e}", ephemeral=True)
         return
 
-    # 彙整回應
     lines = [f"📦 `{code}` 兌換結果："]
     for s in result.get("success", []):
         lines.append(f"✅ {s['player_id']} 成功")
@@ -115,23 +85,7 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
     await interaction.followup.send(f"```\n{chr(10).join(lines)}\n```", ephemeral=True)
 
 
-if __name__ == "__main__":
+def start_discord_bot():
     if not DISCORD_TOKEN:
-        raise RuntimeError("❌ 請設定 DISCORD_TOKEN")
-
-    import threading
-    from flask import Flask
-
-    # 啟動 Flask 用來通過 Cloud Run 健康檢查
-    def run_healthcheck():
-        app = Flask(__name__)
-
-        @app.route("/")
-        def ok():
-            return "✅ Discord Bot is alive!"
-
-        port = int(os.environ.get("PORT", 8080))
-        app.run(host="0.0.0.0", port=port)
-
-    threading.Thread(target=run_healthcheck, daemon=True).start()
+        raise RuntimeError("❌ DISCORD_TOKEN 未設定")
     bot.run(DISCORD_TOKEN)
