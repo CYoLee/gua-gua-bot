@@ -27,6 +27,9 @@ tree = bot.tree
 @bot.event
 async def on_ready():
     print(f"✅ Bot 上線：{bot.user} (ID: {bot.user.id})")
+    print("DISCORD_TOKEN:", DISCORD_TOKEN)
+    print("GUILD_ID:", GUILD_ID)
+    print("REDEEM_API_URL:", REDEEM_API_URL)
     try:
         guild = discord.Object(id=int(GUILD_ID))
         synced = await tree.sync(guild=guild)
