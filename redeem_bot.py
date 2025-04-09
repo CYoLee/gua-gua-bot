@@ -11,6 +11,7 @@ from firebase_admin import credentials, firestore
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 REDEEM_API_URL = os.environ.get("REDEEM_API_URL")
 GUILD_ID = os.environ.get("GUILD_ID")
+print(f"[DEBUG] GUILD_ID: {GUILD_ID}")
 
 cred_json = json.loads(os.environ.get("FIREBASE_CREDENTIALS", "{}"))
 if "private_key" in cred_json:
@@ -25,16 +26,18 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+guild = discord.Object(id=int(GUILD_ID))
+
 
 @bot.event
 async def on_ready():
+    print("🚀 on_ready 觸發")
     print(f"✅ Bot 上線：{bot.user}")
     try:
-        guild = discord.Object(id=int(GUILD_ID))
         synced = await tree.sync(guild=guild)
-        print(f"✅ 已同步 {len(synced)} 個指令到 GUILD {GUILD_ID}")
+        print(f"✅ 指令已同步至 GUILD {GUILD_ID}（共 {len(synced)} 筆）")
     except Exception as e:
-        print(f"❌ 同步失敗: {e}")
+        print(f"❌ 同步指令失敗: {e}")
 
 
 @tree.command(
