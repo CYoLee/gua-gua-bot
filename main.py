@@ -7,10 +7,12 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # 初始化 Firebase
-if not firebase_admin._apps:
-    cred = credentials.ApplicationDefault()
-    firebase_admin.initialize_app(cred)
-db = firestore.client()
+cred_env = os.environ.get("FIREBASE_CREDENTIALS")
+cred_json = json.loads(cred_env)
+
+if cred_json.get("type") != "service_account":
+    raise RuntimeError("❌ FIREBASE_CREDENTIALS 缺少正確欄位")
+
 
 # 環境變數設定
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")

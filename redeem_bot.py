@@ -4,21 +4,32 @@ import os
 import json
 import discord
 import aiohttp
+from dotenv import load_dotenv
 from discord import app_commands
 from discord.ext import commands
 
 import firebase_admin
 from firebase_admin import credentials, firestore
 
+# ✅ 載入 .env 檔案變數
+load_dotenv()
+
 # 讀取環境變數
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 REDEEM_API_URL = os.environ.get("REDEEM_API_URL")
 GUILD_ID = os.environ.get("GUILD_ID")
+if not GUILD_ID:
+    raise RuntimeError("❌ GUILD_ID 環境變數未設定")
+
+guild = discord.Object(id=int(GUILD_ID))  # 這邊才轉換成 int
+
 
 # 解析 Firebase 憑證 JSON（處理原始 \n 換行符）
 cred_json = json.loads(os.environ.get("FIREBASE_CREDENTIALS", "{}"))
 if "private_key" in cred_json:
     cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
+
+print("[DEBUG] Firebase Credential JSON:", cred_json)
 
 # Firebase 初始化
 if not firebase_admin._apps:
