@@ -29,13 +29,16 @@ tree = bot.tree
 @bot.event
 async def on_ready():
     print(f"✅ Bot 上線：{bot.user} (ID: {bot.user.id})")
-    print("🔍 嘗試同步 GUILD 指令...")
     try:
+        print("⏳ 同步指令中...")
+        # 推薦：先同步全域（預防第一次部署）
+        await tree.sync()
+        print("✅ 全域指令同步成功")
+
+        # 然後針對指定 GUILD 強制同步（加速生效）
         guild = discord.Object(id=int(GUILD_ID))
         synced = await tree.sync(guild=guild)
         print(f"✅ 指令已同步至 GUILD {GUILD_ID}（共 {len(synced)} 筆）")
-        for cmd in synced:
-            print(f" - /{cmd.name}: {cmd.description}")
     except Exception as e:
         print(f"❌ 指令同步失敗: {e}")
 
