@@ -16,7 +16,7 @@ if "private_key" in cred_json:
     cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
 
 if not firebase_admin._apps:
-    cred = credentials.Certificate(cred_json)
+    cred = credentials.Certificate(firebase_key.json)
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
