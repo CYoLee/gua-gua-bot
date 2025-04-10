@@ -66,8 +66,11 @@ node_modules/
 .env
 .env.yaml
 deploy.bat
+deploy.ps1
 
 # dataconnect generated files
 .dataconnect
 
 gothic-depth-456114-c3-firebase-adminsdk-fbsvc-e29a8fa3ff.json
+
+.github/
