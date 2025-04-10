@@ -1,9 +1,9 @@
-# main.py
 import os
 import json
 from flask import Flask, request, jsonify
 from redeem_bot import start_discord_bot
 from redeem_web import process_redeem_code
+import firebase_config  # 載入 firebase_config.py
 
 app = Flask(__name__)
 

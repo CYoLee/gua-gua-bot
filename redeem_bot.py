@@ -5,19 +5,13 @@ import aiohttp
 from discord import app_commands
 from discord.ext import commands
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import firestore
+import firebase_config  # 載入 firebase_config.py
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 REDEEM_API_URL = os.environ.get("REDEEM_API_URL")
 GUILD_ID = os.environ.get("GUILD_ID")
 
-cred_json = json.loads(os.environ.get("FIREBASE_CREDENTIALS", "{}"))
-if "private_key" in cred_json:
-    cred_json["private_key"] = cred_json["private_key"].replace("\\n", "\n")
-
-if not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_key.json)
-    firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 intents = discord.Intents.default()
@@ -31,11 +25,9 @@ async def on_ready():
     print(f"✅ Bot 上線：{bot.user} (ID: {bot.user.id})")
     try:
         print("⏳ 同步指令中...")
-        # 推薦：先同步全域（預防第一次部署）
         await tree.sync()
         print("✅ 全域指令同步成功")
 
-        # 然後針對指定 GUILD 強制同步（加速生效）
         guild = discord.Object(id=int(GUILD_ID))
         synced = await tree.sync(guild=guild)
         print(f"✅ 指令已同步至 GUILD {GUILD_ID}（共 {len(synced)} 筆）")
@@ -68,8 +60,6 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
                 f"{REDEEM_API_URL}/redeem_submit",
                 json={"code": code, "ids": ids, "batch_id": batch_id},
             ) as resp:
-                print("🔍 發送至:", resp.url)
-                print("📥 狀態碼:", resp.status)
                 if resp.status != 200:
                     await interaction.followup.send(
                         f"❌ Cloud Run 回應錯誤：{resp.status}", ephemeral=True
