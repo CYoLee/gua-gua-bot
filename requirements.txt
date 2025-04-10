@@ -8,3 +8,4 @@ pytesseract==0.3.10
 webdriver-manager==4.0.1
 discord.py==2.3.2
 aiohttp==3.9.3
+playwright
