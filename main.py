@@ -1,10 +1,9 @@
 # main.py
 import os
 import json
-from threading import Thread
 from flask import Flask, request, jsonify
 from redeem_bot import start_discord_bot
-from redeem_web import process_redeem_code  # ⬅️ 你要另外建立這個檔案或模組
+from redeem_web import process_redeem_code
 
 app = Flask(__name__)
 
@@ -40,10 +39,5 @@ def redeem_submit():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
 if __name__ == "__main__":
-    Thread(target=run_flask).start()
-    start_discord_bot()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
