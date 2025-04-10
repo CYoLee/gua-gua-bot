@@ -21,15 +21,14 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 intents = discord.Intents.default()
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
+
 
 @bot.event
 async def on_ready():
     print(f"✅ Bot 上線：{bot.user} (ID: {bot.user.id})")
-    print("DISCORD_TOKEN:", DISCORD_TOKEN)
-    print("GUILD_ID:", GUILD_ID)
-    print("REDEEM_API_URL:", REDEEM_API_URL)
     try:
         guild = discord.Object(id=int(GUILD_ID))
         synced = await tree.sync(guild=guild)
@@ -37,7 +36,8 @@ async def on_ready():
     except Exception as e:
         print(f"❌ 指令同步失敗: {e}")
 
-@tree.command(name="redeem", description="輸入兌換碼與 (選填) 單一 ID，否則使用 Firestore 中 config.ids 清單")
+
+@tree.command(name="redeem", description="輸入兌換碼與 (選填) 單一 ID")
 @app_commands.describe(code="禮包兌換碼", player_id="單一 ID（選填）")
 async def redeem(interaction: discord.Interaction, code: str, player_id: str = ""):
     await interaction.response.defer(ephemeral=True)
@@ -47,8 +47,7 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
     if not ids:
         try:
             doc = db.collection("config").document("ids").get()
-            data = doc.to_dict() or {}
-            ids = data.get("list", [])
+            ids = (doc.to_dict() or {}).get("list", [])
         except Exception as e:
             await interaction.followup.send(f"❌ Firestore 錯誤: {e}", ephemeral=True)
             return
@@ -58,11 +57,15 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
         return
 
     try:
-        payload = {"code": code, "ids": ids, "batch_id": batch_id}
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload, timeout=30) as resp:
+            async with session.post(
+                f"{REDEEM_API_URL}/redeem_submit",
+                json={"code": code, "ids": ids, "batch_id": batch_id},
+            ) as resp:
                 if resp.status != 200:
-                    await interaction.followup.send(f"❌ Cloud Run 回應錯誤：{resp.status}", ephemeral=True)
+                    await interaction.followup.send(
+                        f"❌ Cloud Run 回應錯誤：{resp.status}", ephemeral=True
+                    )
                     return
                 result = await resp.json()
     except Exception as e:
@@ -75,6 +78,7 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
     for f in result.get("failure", []):
         lines.append(f"❌ {f['player_id']} 失敗 ({f.get('reason', '未知錯誤')})")
     await interaction.followup.send(f"```\n{chr(10).join(lines)}\n```", ephemeral=True)
+
 
 def start_discord_bot():
     if not DISCORD_TOKEN:
