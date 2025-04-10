@@ -1,14 +1,22 @@
 # firebase_config.py
-import os, json, firebase_admin
-from firebase_admin import credentials
 
-# 檢查是否已有 Firebase 應用啟動
+import os
+import json
+import base64
+import firebase_admin
+from firebase_admin import credentials, initialize_app
+
 if not firebase_admin._apps:
-    key = os.environ.get("FIREBASE_KEY_JSON") or os.environ.get("FIREBASE_CREDENTIALS", "{}")
     try:
-        cred_dict = json.loads(key)
+        if "FIREBASE_KEY_BASE64" in os.environ:
+            key_json = base64.b64decode(os.environ["FIREBASE_KEY_BASE64"]).decode("utf-8")
+        else:
+            key_json = os.environ.get("FIREBASE_KEY_JSON") or os.environ.get("FIREBASE_CREDENTIALS", "{}")
+
+        cred_dict = json.loads(key_json)
         cred = credentials.Certificate(cred_dict)
-        firebase_admin.initialize_app(cred)
+        initialize_app(cred)
+
     except Exception as e:
         print(f"❌ Firebase 初始化錯誤: {e}")
         raise RuntimeError("無法初始化 Firebase")
