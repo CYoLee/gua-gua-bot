@@ -68,6 +68,8 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
                 f"{REDEEM_API_URL}/redeem_submit",
                 json={"code": code, "ids": ids, "batch_id": batch_id},
             ) as resp:
+                print("🔍 發送至:", resp.url)
+                print("📥 狀態碼:", resp.status)
                 if resp.status != 200:
                     await interaction.followup.send(
                         f"❌ Cloud Run 回應錯誤：{resp.status}", ephemeral=True
