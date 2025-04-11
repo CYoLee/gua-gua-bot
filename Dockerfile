@@ -1,5 +1,5 @@
 # Dockerfile
-FROM mcr.microsoft.com/playwright/python:latest
+FROM mcr.microsoft.com/playwright/python:v1.51.0-jammy
 
 WORKDIR /app
 
@@ -23,3 +23,4 @@ ENV PLAYWRIGHT_BROWSERS_PATH=0
 ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "main.py"]
+ENV PYTHONIOENCODING=utf-8
