@@ -2,7 +2,7 @@ import os
 import json
 import discord
 import aiohttp
-from discord import app_commands
+from discord import app_commands, Embed
 from discord.ext import commands
 import firebase_admin
 from firebase_admin import firestore
@@ -71,11 +71,27 @@ async def redeem(interaction: discord.Interaction, code: str, player_id: str = "
         return
 
     lines = [f"📦 `{code}` 兌換結果："]
+    embeds = []
+
     for s in result.get("success", []):
         lines.append(f"✅ {s['player_id']} 成功")
+        if s.get("screenshot"):
+            embed = Embed(title=f"{s['player_id']} 成功截圖", url=s["screenshot"])
+            embed.set_image(url=s["screenshot"])
+            embeds.append(embed)
+
     for f in result.get("failure", []):
         lines.append(f"❌ {f['player_id']} 失敗 ({f.get('reason', '未知錯誤')})")
-    await interaction.followup.send(f"```\n{chr(10).join(lines)}\n```", ephemeral=True)
+        if f.get("screenshot"):
+            embed = Embed(title=f"{f['player_id']} 失敗截圖", url=f["screenshot"])
+            embed.set_image(url=f["screenshot"])
+            embeds.append(embed)
+
+    await interaction.followup.send(
+        f"```\n{chr(10).join(lines)}\n```",
+        embeds=embeds[:10],  # 最多10個 embed
+        ephemeral=True
+    )
 
 
 def start_discord_bot():
