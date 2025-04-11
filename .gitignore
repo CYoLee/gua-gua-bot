@@ -75,3 +75,5 @@ gothic-depth-456114-c3-firebase-adminsdk-fbsvc-e29a8fa3ff.json
 
 .venv/
 firebase_key.json
+deploy_local.sh
+deploy_local.ps1
