@@ -170,7 +170,7 @@ async def on_ready():
     for gid in GUILD_IDS:
         try:
             guild = discord.Object(id=gid)
-            await tree.clear_commands(guild=guild)   # 🔧 清空舊指令
+            tree.clear_commands(guild=guild)   # 🔧 清空舊指令
             synced = await tree.sync(guild=guild)     # 🔄 強制同步
             print(f"✅ Resynced {len(synced)} commands to guild {gid}")
         except Exception as e:
