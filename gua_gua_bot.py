@@ -40,16 +40,14 @@ tree = bot.tree
 @app_commands.describe(player_id="玩家 ID")
 async def add_id(interaction: discord.Interaction, player_id: str):
     guild_id = str(interaction.guild_id)
-    ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
-    ref.set({"dummy": "ok"})
+    db.collection("ids").document(guild_id).collection("players").document(player_id).set({"added_by": "bot"})
     await interaction.response.send_message(f"✅ 已新增 player_id `{player_id}` 至 guild `{guild_id}`", ephemeral=True)
 
 @tree.command(name="remove_id", description="移除玩家ID")
 @app_commands.describe(player_id="要移除的玩家 ID")
 async def remove_id(interaction: discord.Interaction, player_id: str):
     guild_id = str(interaction.guild_id)
-    ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
-    ref.delete()
+    db.collection("ids").document(guild_id).collection("players").document(player_id).delete()
     await interaction.response.send_message(f"✅ 已移除 player_id `{player_id}` 從 guild `{guild_id}`", ephemeral=True)
 
 @tree.command(name="list_ids", description="列出所有玩家 ID")
@@ -60,15 +58,15 @@ async def list_ids(interaction: discord.Interaction):
     if not ids:
         await interaction.response.send_message("📭 沒有任何 ID", ephemeral=True)
     else:
-        await interaction.response.send_message(f"📋 玩家 ID 列表：\n- " + "\n- ".join(ids), ephemeral=True)
+        await interaction.response.send_message("📋 玩家 ID 列表：\n- " + "\n- ".join(ids), ephemeral=True)
 
-# === 活動提醒通知 ===
+# === 活動提醒 ===
 @tree.command(name="add_notify", description="新增活動提醒(可多日期或多時間)")
 @app_commands.describe(
-    date="格式為 YYYY-MM-DD，可輸入多個日期，以逗號分隔",
-    time="格式為 HH:MM，可輸入多個時間，以逗號分隔",
+    date="格式: YYYY-MM-DD，可多個以逗號分隔",
+    time="格式: HH:MM，可多個以逗號分隔",
     message="要提醒的訊息",
-    mention="要標記的對象（例如 @everyone 或 <@&角色ID>）"
+    mention="要標記的對象（@everyone 或 <@&角色ID>）"
 )
 async def add_notify(interaction: discord.Interaction, date: str, time: str, message: str, mention: str = ""):
     try:
@@ -106,7 +104,7 @@ async def list_notify(interaction: discord.Interaction):
         await interaction.response.send_message(f"❌ 讀取失敗: {str(e)}", ephemeral=True)
 
 @tree.command(name="remove_notify", description="移除提醒 (index)")
-@app_commands.describe(index="欲刪除提醒的 index")
+@app_commands.describe(index="要刪除的提醒 index")
 async def remove_notify(interaction: discord.Interaction, index: int):
     try:
         docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
@@ -119,7 +117,7 @@ async def remove_notify(interaction: discord.Interaction, index: int):
         await interaction.response.send_message(f"❌ 刪除失敗: {str(e)}", ephemeral=True)
 
 @tree.command(name="edit_notify", description="編輯提醒內容 (by index)")
-@app_commands.describe(index="提醒 index", date="新日期 (YYYY-MM-DD)", time="新時間 (HH:MM)", message="新訊息內容", mention="新 mention 對象")
+@app_commands.describe(index="提醒 index", date="新日期", time="新時間", message="新訊息", mention="新 mention 對象")
 async def edit_notify(interaction: discord.Interaction, index: int, date: str = None, time: str = None, message: str = None, mention: str = None):
     try:
         docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
@@ -146,7 +144,7 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
     except Exception as e:
         await interaction.response.send_message(f"❌ 更新失敗: {str(e)}", ephemeral=True)
 
-# === 通知推播 Loop ===
+# === 自動推播提醒 ===
 @tasks.loop(seconds=30)
 async def notify_loop():
     now = datetime.now(tz)
@@ -163,15 +161,16 @@ async def notify_loop():
                 print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
 
-# === 登入與同步指令 ===
+# === 登入與強制重註冊指令 ===
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     for gid in GUILD_IDS:
         try:
             guild = discord.Object(id=gid)
+            tree.clear_commands(guild=guild)
             synced = await tree.sync(guild=guild)
-            print(f"✅ Synced {len(synced)} commands to guild {gid}")
+            print(f"✅ Resynced {len(synced)} commands to guild {gid}")
         except Exception as e:
             print(f"❌ Failed to sync to guild {gid}: {e}")
     notify_loop.start()
