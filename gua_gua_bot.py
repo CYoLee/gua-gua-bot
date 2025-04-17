@@ -151,6 +151,22 @@ async def edit_notify(interaction: discord.Interaction, index: int,
         await interaction.response.send_message(f"❌ 更新失敗: {str(e)}", ephemeral=True)
 
 
+@tasks.loop(seconds=30)
+async def notify_loop():
+    now = datetime.now(tz).strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
+    docs = db.collection("notifications").where("datetime", "==", now).stream()
+    for doc in docs:
+        data = doc.to_dict()
+        channel_id = int(data["channel_id"])
+        try:
+            channel = await bot.fetch_channel(channel_id)
+            msg = f"{data['mention']}\n⏰ **活動提醒** ⏰\n{data['message']}"
+            await channel.send(msg)
+        except Exception as e:
+            print(f"[通知錯誤] {e}")
+        db.collection("notifications").document(doc.id).delete()
+
+
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
@@ -160,6 +176,7 @@ async def on_ready():
             print(f"✅ Synced {len(synced)} commands to guild {guild_id}")
         except Exception as e:
             print(f"❌ Failed to sync to guild {guild_id}: {e}")
+    notify_loop.start()
 
 
 bot.run(TOKEN)
