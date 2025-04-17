@@ -163,13 +163,16 @@ async def notify_loop():
                 print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
 
+# === 登入與指令重建 ===
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     for gid in GUILD_IDS:
         try:
-            await tree.sync(guild=discord.Object(id=gid))
-            print(f"✅ Synced commands to guild {gid}")
+            guild = discord.Object(id=gid)
+            await tree.clear_commands(guild=guild)   # 🔧 清空舊指令
+            synced = await tree.sync(guild=guild)     # 🔄 強制同步
+            print(f"✅ Resynced {len(synced)} commands to guild {gid}")
         except Exception as e:
             print(f"❌ Failed to sync to guild {gid}: {e}")
     notify_loop.start()
