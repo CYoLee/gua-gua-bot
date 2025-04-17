@@ -1,4 +1,3 @@
-# gua_gua_bot.py
 import os
 import discord
 from discord import app_commands
@@ -10,7 +9,7 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 REDEEM_API_URL = os.getenv("REDEEM_API_URL")
-GUILD_ID = int(os.getenv("GUILD_ID"))
+GUILD_IDS = [int(gid.strip()) for gid in os.getenv("GUILD_IDS", "").split(",") if gid.strip()]
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -18,27 +17,30 @@ tree = bot.tree
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    try:
-        synced = await tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"Synced {len(synced)} commands.")
-    except Exception as e:
-        print(f"Failed to sync: {e}")
+    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    for gid in GUILD_IDS:
+        try:
+            await tree.sync(guild=discord.Object(id=gid))
+            print(f"✅ Synced commands to guild {gid}")
+        except Exception as e:
+            print(f"❌ Failed to sync to guild {gid}: {e}")
 
-# ========== /redeem_submit ==========
-@tree.command(name="redeem_submit", description="Submit gift code / 提交兌換碼（呱呱雲腳功能）", guild=discord.Object(id=GUILD_ID))
+# /redeem_submit
+@tree.command(name="redeem_submit", description="Submit a gift code to one or multiple players", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
 @app_commands.describe(
     code="兌換碼（必填）",
-    player_id="玩家 ID（選填，填了就單人，不填就會用 list_ids 自動多人）"
+    player_id="玩家 ID（選填，填了就是單人兌換）"
 )
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     await interaction.response.defer(ephemeral=True)
+    payload = {"code": code}
+    if player_id:
+        payload["player_id"] = player_id
+        payload["guild_id"] = str(interaction.guild_id)
+    else:
+        payload["guild_id"] = str(interaction.guild_id)
+
     async with aiohttp.ClientSession() as session:
-        payload = {"code": code}
-        if player_id:
-            payload["player_id"] = player_id
-        else:
-            payload["guild_id"] = str(interaction.guild_id)
         async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
             result = await resp.json()
 
@@ -50,8 +52,8 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         )
     await interaction.followup.send(msg, ephemeral=True)
 
-# ========== /add_id ==========
-@tree.command(name="add_id", description="Add a player ID (9 digits) / 新增玩家ID(9位數)", guild=discord.Object(id=GUILD_ID))
+# /add_id
+@tree.command(name="add_id", description="新增玩家 ID", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
 @app_commands.describe(player_id="要新增的玩家 ID")
 async def add_id(interaction: discord.Interaction, player_id: str):
     await interaction.response.defer(ephemeral=True)
@@ -64,8 +66,8 @@ async def add_id(interaction: discord.Interaction, player_id: str):
             result = await resp.json()
     await interaction.followup.send(result.get("message", "❌ 新增失敗"), ephemeral=True)
 
-# ========== /remove_id ==========
-@tree.command(name="remove_id", description="Remove a player ID / 移除玩家ID", guild=discord.Object(id=GUILD_ID))
+# /remove_id
+@tree.command(name="remove_id", description="移除玩家 ID", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
 @app_commands.describe(player_id="要移除的玩家 ID")
 async def remove_id(interaction: discord.Interaction, player_id: str):
     await interaction.response.defer(ephemeral=True)
@@ -78,8 +80,8 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
             result = await resp.json()
     await interaction.followup.send(result.get("message", "❌ 移除失敗"), ephemeral=True)
 
-# ========== /list_ids ==========
-@tree.command(name="list_ids", description="List all player IDs stored / 列出所有玩家ID", guild=discord.Object(id=GUILD_ID))
+# /list_ids
+@tree.command(name="list_ids", description="列出目前伺服器的所有玩家 ID", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
 async def list_ids(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     async with aiohttp.ClientSession() as session:
@@ -87,7 +89,7 @@ async def list_ids(interaction: discord.Interaction):
             result = await resp.json()
     ids = result.get("player_ids", [])
     if ids:
-        msg = f"📋 共有 {len(ids)} 位玩家：\n" + "\n".join(f"• `{pid}`" for pid in ids)
+        msg = f"📋 共 {len(ids)} 位玩家：\n" + "\n".join(f"• `{pid}`" for pid in ids)
     else:
         msg = "⚠️ 尚未新增任何玩家 ID"
     await interaction.followup.send(msg, ephemeral=True)
