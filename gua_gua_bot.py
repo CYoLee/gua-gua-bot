@@ -33,7 +33,7 @@ db = firestore.client()
 # === Discord Init ===
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(bot)
+tree = bot.tree  # ✅ 正確寫法
 
 # === ID 管理 ===
 @tree.command(name="add_id", description="新增玩家ID (9位數)")
@@ -62,7 +62,7 @@ async def list_ids(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(f"📋 玩家 ID 列表：\n- " + "\n- ".join(ids), ephemeral=True)
 
-# === 活動提醒通知 ===
+# === 活動提醒 ===
 @tree.command(name="add_notify", description="新增活動提醒(可多日期或多時間)")
 @app_commands.describe(
     date="格式為 YYYY-MM-DD，可輸入多個日期，以逗號分隔",
@@ -146,7 +146,7 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
     except Exception as e:
         await interaction.response.send_message(f"❌ 更新失敗: {str(e)}", ephemeral=True)
 
-# === 通知推播 Loop ===
+# === 自動提醒推播 ===
 @tasks.loop(seconds=30)
 async def notify_loop():
     now = datetime.now(tz)
@@ -163,6 +163,7 @@ async def notify_loop():
                 print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
 
+# === 登入與指令同步 ===
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
