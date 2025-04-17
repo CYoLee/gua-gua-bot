@@ -33,7 +33,7 @@ db = firestore.client()
 # === Discord Init ===
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(bot)
+tree = bot.tree
 
 # === ID 管理 ===
 @tree.command(name="add_id", description="新增玩家ID (9位數)")
