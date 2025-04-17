@@ -1,14 +1,14 @@
 import os
 import json
+import base64
+import pytz
 import discord
+from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
-from datetime import datetime
-import pytz
-import base64
 
 # === ENV ===
 load_dotenv()
@@ -24,8 +24,7 @@ try:
     else:
         cred_dict = json.loads(base64.b64decode(cred_env).decode("utf-8"))
 except Exception as e:
-    raise Exception(f"無法解析 Firebase_CREDENTIALS: {e}")
-
+    raise Exception(f"無法解析 FIREBASE_CREDENTIALS: {e}")
 cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
@@ -34,7 +33,7 @@ db = firestore.client()
 # === Discord Init ===
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
+tree = app_commands.CommandTree(bot)
 
 # === ID 管理 ===
 @tree.command(name="add_id", description="新增玩家ID (9位數)")
@@ -147,7 +146,7 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
     except Exception as e:
         await interaction.response.send_message(f"❌ 更新失敗: {str(e)}", ephemeral=True)
 
-# === 自動提醒 Loop ===
+# === 通知推播 Loop ===
 @tasks.loop(seconds=30)
 async def notify_loop():
     now = datetime.now(tz)
@@ -169,8 +168,8 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     for gid in GUILD_IDS:
         try:
-            synced = await tree.sync(guild=discord.Object(id=gid))
-            print(f"✅ Synced {len(synced)} commands to guild {gid}")
+            await tree.sync(guild=discord.Object(id=gid))
+            print(f"✅ Synced commands to guild {gid}")
         except Exception as e:
             print(f"❌ Failed to sync to guild {gid}: {e}")
     notify_loop.start()
