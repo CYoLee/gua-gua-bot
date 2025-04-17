@@ -1,98 +1,165 @@
 import os
 import discord
+from discord.ext import commands, tasks
 from discord import app_commands
-from discord.ext import commands
-import aiohttp
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials, firestore
+import asyncio
+from datetime import datetime, timedelta
+import pytz
 
+# === ENV ===
 load_dotenv()
-
 TOKEN = os.getenv("DISCORD_TOKEN")
-REDEEM_API_URL = os.getenv("REDEEM_API_URL")
-GUILD_IDS = [int(gid.strip()) for gid in os.getenv("GUILD_IDS", "").split(",") if gid.strip()]
+GUILD_IDS = [int(gid.strip()) for gid in os.getenv("GUILD_IDS", "").split(",")]
+tz = pytz.timezone("Asia/Taipei")
 
+# === Firestore Init ===
+cred_dict = eval(os.getenv("FIREBASE_CREDENTIALS"))
+cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+cred = credentials.Certificate(cred_dict)
+firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# === Discord Bot Init ===
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+
+@tree.command(name="add_notify", description="新增活動提醒(可多日期或多時間)")
+@app_commands.describe(
+    date="格式為 YYYY-MM-DD，可輸入多個日期，以逗號分隔",
+    time="格式為 HH:MM，可輸入多個時間，以逗號分隔",
+    message="要提醒的訊息",
+    mention="要標記的對象（例如 @everyone 或 <@&角色ID>）"
+)
+async def add_notify(interaction: discord.Interaction, date: str, time: str, message: str, mention: str = ""):
+    try:
+        dates = [d.strip() for d in date.split(",")]
+        times = [t.strip() for t in time.split(",")]
+        created = 0
+
+        for d in dates:
+            for t in times:
+                dt_str = f"{d} {t}"
+                dt = tz.localize(datetime.strptime(dt_str, "%Y-%m-%d %H:%M"))
+
+                db.collection("notifications").add({
+                    "channel_id": str(interaction.channel_id),
+                    "guild_id": str(interaction.guild_id),
+                    "datetime": dt.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
+                    "message": message,
+                    "mention": mention
+                })
+                created += 1
+
+        await interaction.response.send_message(f"✅ 已新增 {created} 筆提醒", ephemeral=True)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ 新增失敗: {str(e)}", ephemeral=True)
+
+
+@tree.command(name="list_notify", description="查看提醒列表")
+async def list_notify(interaction: discord.Interaction):
+    try:
+        docs = db.collection("notifications") \
+            .where("guild_id", "==", str(interaction.guild_id)) \
+            .order_by("datetime") \
+            .stream()
+
+        result = []
+        for i, doc in enumerate(docs):
+            data = doc.to_dict()
+            result.append(f"{i}. `{data.get('datetime')}` - {data.get('message')}")
+
+        if not result:
+            await interaction.response.send_message("📭 沒有提醒資料", ephemeral=True)
+        else:
+            await interaction.response.send_message("\n".join(result), ephemeral=True)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ 讀取失敗: {str(e)}", ephemeral=True)
+
+
+@tree.command(name="remove_notify", description="移除提醒 (index)")
+@app_commands.describe(index="欲刪除提醒的 index")
+async def remove_notify(interaction: discord.Interaction, index: int):
+    try:
+        docs = list(db.collection("notifications")
+                    .where("guild_id", "==", str(interaction.guild_id))
+                    .order_by("datetime")
+                    .stream())
+
+        if index < 0 or index >= len(docs):
+            await interaction.response.send_message("❌ index 無效", ephemeral=True)
+            return
+
+        db.collection("notifications").document(docs[index].id).delete()
+        await interaction.response.send_message(f"🗑️ 已刪除第 {index} 筆提醒", ephemeral=True)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ 刪除失敗: {str(e)}", ephemeral=True)
+
+
+@tree.command(name="edit_notify", description="編輯提醒內容 (by index)")
+@app_commands.describe(
+    index="要編輯的提醒 index",
+    date="新日期 (YYYY-MM-DD)",
+    time="新時間 (HH:MM)",
+    message="新訊息內容",
+    mention="新 mention 對象"
+)
+async def edit_notify(interaction: discord.Interaction, index: int,
+                      date: str = None, time: str = None,
+                      message: str = None, mention: str = None):
+    try:
+        docs = list(db.collection("notifications")
+                    .where("guild_id", "==", str(interaction.guild_id))
+                    .order_by("datetime")
+                    .stream())
+
+        if index < 0 or index >= len(docs):
+            await interaction.response.send_message("❌ index 無效", ephemeral=True)
+            return
+
+        doc = docs[index]
+        data = doc.to_dict()
+
+        if date or time:
+            orig = datetime.strptime(data["datetime"].split(" ")[0], "%Y年%m月%d日")
+            h, m = map(int, data["datetime"].split(" ")[-2].replace(":00", "").split(":"))
+            if date:
+                orig = orig.replace(**{k: int(v) for k, v in zip(["year", "month", "day"], date.split("-"))})
+            if time:
+                h, m = map(int, time.split(":"))
+                orig = orig.replace(hour=h, minute=m)
+
+            new_dt = tz.localize(orig)
+            data["datetime"] = new_dt.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
+
+        if message:
+            data["message"] = message
+        if mention:
+            data["mention"] = mention
+
+        db.collection("notifications").document(doc.id).update(data)
+        await interaction.response.send_message(f"✏️ 已更新第 {index} 筆提醒", ephemeral=True)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ 更新失敗: {str(e)}", ephemeral=True)
+
+
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
-    for gid in GUILD_IDS:
+    for guild_id in GUILD_IDS:
         try:
-            await tree.sync(guild=discord.Object(id=gid))
-            print(f"✅ Synced commands to guild {gid}")
+            synced = await tree.sync(guild=discord.Object(id=guild_id))
+            print(f"✅ Synced {len(synced)} commands to guild {guild_id}")
         except Exception as e:
-            print(f"❌ Failed to sync to guild {gid}: {e}")
+            print(f"❌ Failed to sync to guild {guild_id}: {e}")
 
-# /redeem_submit
-@tree.command(name="redeem_submit", description="Submit a gift code to one or multiple players", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
-@app_commands.describe(
-    code="兌換碼（必填）",
-    player_id="玩家 ID（選填，填了就是單人兌換）"
-)
-async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
-    await interaction.response.defer(ephemeral=True)
-    payload = {"code": code}
-    if player_id:
-        payload["player_id"] = player_id
-        payload["guild_id"] = str(interaction.guild_id)
-    else:
-        payload["guild_id"] = str(interaction.guild_id)
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
-            result = await resp.json()
-
-    if isinstance(result, dict):
-        msg = f"🎯 玩家 {result['player_id']}：{'✅ 成功' if result['success'] else '❌ 失敗'}\n📩 {result.get('message') or result.get('reason')}"
-    else:
-        msg = "🎯 多人兌換結果：\n" + "\n".join(
-            f"• {r['player_id']}：{'✅' if r['success'] else '❌'} {r.get('message') or r.get('reason')}" for r in result
-        )
-    await interaction.followup.send(msg, ephemeral=True)
-
-# /add_id
-@tree.command(name="add_id", description="新增玩家 ID", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
-@app_commands.describe(player_id="要新增的玩家 ID")
-async def add_id(interaction: discord.Interaction, player_id: str):
-    await interaction.response.defer(ephemeral=True)
-    payload = {
-        "guild_id": str(interaction.guild_id),
-        "player_id": player_id
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(f"{REDEEM_API_URL}/add_id", json=payload) as resp:
-            result = await resp.json()
-    await interaction.followup.send(result.get("message", "❌ 新增失敗"), ephemeral=True)
-
-# /remove_id
-@tree.command(name="remove_id", description="移除玩家 ID", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
-@app_commands.describe(player_id="要移除的玩家 ID")
-async def remove_id(interaction: discord.Interaction, player_id: str):
-    await interaction.response.defer(ephemeral=True)
-    payload = {
-        "guild_id": str(interaction.guild_id),
-        "player_id": player_id
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(f"{REDEEM_API_URL}/remove_id", json=payload) as resp:
-            result = await resp.json()
-    await interaction.followup.send(result.get("message", "❌ 移除失敗"), ephemeral=True)
-
-# /list_ids
-@tree.command(name="list_ids", description="列出目前伺服器的所有玩家 ID", guilds=[discord.Object(id=gid) for gid in GUILD_IDS])
-async def list_ids(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f"{REDEEM_API_URL}/list_ids?guild_id={interaction.guild_id}") as resp:
-            result = await resp.json()
-    ids = result.get("player_ids", [])
-    if ids:
-        msg = f"📋 共 {len(ids)} 位玩家：\n" + "\n".join(f"• `{pid}`" for pid in ids)
-    else:
-        msg = "⚠️ 尚未新增任何玩家 ID"
-    await interaction.followup.send(msg, ephemeral=True)
-
-if __name__ == "__main__":
-    bot.run(TOKEN)
+bot.run(TOKEN)
