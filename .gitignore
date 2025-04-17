@@ -1,0 +1,56 @@
+# === Python 編譯與執行檔 ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# === 虛擬環境 ===
+.venv/
+venv/
+
+# === 環境變數與金鑰檔 ===
+.env
+.env.*
+firebase_key.json
+encoded_key.txt
+gothic-depth-456114-c3-firebase-adminsdk-*.json
+
+# === 日誌與輸出檔 ===
+*.log
+*.tar
+build.log
+recent_logs.log
+
+# === Deploy 腳本與不需上傳的本地檔案 ===
+deploy*.ps1
+deploy*.sh
+deploy.bat
+
+# === Node / Web 相關的忽略（可視需求保留） ===
+node_modules/
+bower_components/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log
+.yarn-integrity
+
+# === Firebase 雜項 ===
+.firebase/
+firebase-debug.log*
+firebase-debug.*.log*
+.firebaserc
+
+# === 測試與覆蓋率報告（可選） ===
+.nyc_output/
+coverage/
+lib-cov/
+
+# === 其他工具產生的暫存檔 ===
+.pids
+*.pid
+*.pid.lock
+.dataconnect
+.lock-wscript
+.eslintcache
+.node_repl_history

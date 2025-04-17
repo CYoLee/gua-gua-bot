@@ -1,0 +1,35 @@
+# === 忽略 Git、編譯產物與系統檔案 ===
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.DS_Store
+*.tar
+*.log
+
+# === 忽略虛擬環境與安裝包 ===
+.venv/
+node_modules/
+
+# === 忽略敏感設定與憑證 ===
+.env
+*.env
+.env.yaml
+firebase_key.json
+encoded_key.txt
+
+# === 忽略部署腳本與不需上傳的開發工具 ===
+deploy*.sh
+deploy*.ps1
+build.log
+build.tar
+
+# === 保留要部署的主程式與必要模組 ===
+!main.py
+!firebase_config.py
+!redeem_bot.py
+!redeem_web.py
+!requirements.txt
+!Dockerfile
+!worker/**
+!utils/**
