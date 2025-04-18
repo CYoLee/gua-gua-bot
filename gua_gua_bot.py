@@ -105,12 +105,16 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                 try:
                     if resp.headers.get("Content-Type", "").startswith("application/json"):
                         result = await resp.json()
-                        msg = result.get("message") or result.get("reason") or "❓ 未知回應 / Unknown response"
+                        if not isinstance(result, dict):
+                            msg = f"⚠️ 非預期格式：{result}"
+                        else:
+                            msg = result.get("message") or result.get("reason") or "❓ 未知回應 / Unknown response"
                     else:
                         text = await resp.text()
                         msg = f"⚠️ 非 JSON 回應：{text}"
                 except Exception as e:
-                    msg = f"❌ 發生錯誤：{e}"
+                    msg = f"❌ 發生錯誤：{str(e)}"
+
                 await interaction.followup.send(f"🎁 回應：{msg}", ephemeral=True)
 
     except Exception as e:

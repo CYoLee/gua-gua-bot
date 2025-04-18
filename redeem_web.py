@@ -30,7 +30,7 @@ async def run_redeem(player_id, code):
     browser = None
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=True, args=["--disable-gpu"])
             context = await browser.new_context(locale="zh-TW")
             page = await context.new_page()
             await page.goto("https://wos-giftcode.centurygame.com/", timeout=60000)
@@ -98,9 +98,15 @@ def redeem_submit():
         if not player_ids:
             return {"success": False, "reason": "此 guild_id 下沒有任何 player_id"}
 
-        tasks = [run_redeem(pid, code) for pid in player_ids]
-        results = await asyncio.gather(*tasks)
+        # ✅ 分批 async 執行，每批最多 5 人
+        batch_size = 5
+        results = []
+        for i in range(0, len(player_ids), batch_size):
+            batch = player_ids[i:i + batch_size]
+            tasks = [run_redeem(pid, code) for pid in batch]
+            results.extend(await asyncio.gather(*tasks))
 
+        # 統計結果
         success_count = 0
         fail_count = 0
         fail_details = []
@@ -121,9 +127,11 @@ def redeem_submit():
             "fails": fail_details
         }
 
+
     # 用 nest_asyncio 兼容 Flask 同步框架
     import nest_asyncio
     nest_asyncio.apply()
+    asyncio.set_event_loop(asyncio.new_event_loop())
     result = asyncio.run(async_main())
     return jsonify(result)
 
