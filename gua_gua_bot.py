@@ -122,8 +122,21 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
-@app_commands.describe(date="YYYY-MM-DD, multiple allowed", time="HH:MM, multiple allowed", message="提醒訊息 / Reminder message", mention="標記對象（可空） / Mention target (optional)")
-async def add_notify(interaction: discord.Interaction, date: str, time: str, message: str, mention: str = ""):
+@app_commands.describe(
+    date="YYYY-MM-DD, multiple allowed",
+    time="HH:MM, multiple allowed",
+    message="提醒訊息 / Reminder message",
+    mention="標記對象（可空） / Mention target (optional)",
+    target_channel="提醒要送出的頻道（可選）"
+)
+async def add_notify(
+    interaction: discord.Interaction,
+    date: str,
+    time: str,
+    message: str,
+    mention: str = "",
+    target_channel: discord.TextChannel = None
+):
     try:
         await interaction.response.defer(thinking=True, ephemeral=True)
         dates = [d.strip() for d in date.split(",")]
@@ -133,7 +146,7 @@ async def add_notify(interaction: discord.Interaction, date: str, time: str, mes
             for t in times:
                 dt = tz.localize(datetime.strptime(f"{d} {t}", "%Y-%m-%d %H:%M"))
                 db.collection("notifications").add({
-                    "channel_id": str(interaction.channel_id),
+                    "channel_id": str(target_channel.id if target_channel else interaction.channel_id),
                     "guild_id": str(interaction.guild_id),
                     "datetime": dt.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
                     "message": message,
@@ -230,7 +243,8 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             dt_text = old_data["datetime"].split(" [")[0]
             orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")
         except Exception:
-            orig = datetime.now(tz)
+            # 回退用原字串不解析，直接保留原 datetime
+            orig = tz.localize(datetime.strptime(old_data["datetime"].split(" [")[0], "%Y年%m月%d日 %p%I:%M"))
 
         # === 修改時間 ===
         if date:
