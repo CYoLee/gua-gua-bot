@@ -97,11 +97,26 @@ def redeem_submit():
     if not player_ids:
         return jsonify({"success": False, "reason": "此 guild_id 下沒有任何 player_id"}), 404
 
-    results = []
-    for pid in player_ids:
-        results.append(asyncio.run(run_redeem(pid, code)))
+    success_count = 0
+    fail_count = 0
+    fail_details = []
 
-    return jsonify(results)
+    for pid in player_ids:
+        result = asyncio.run(run_redeem(pid, code))
+        if result.get("success"):
+            success_count += 1
+        else:
+            fail_count += 1
+            if len(fail_details) < 10:
+                fail_details.append({
+                    "player_id": pid,
+                    "reason": result.get("reason", "未知錯誤")
+                })
+
+    return jsonify({
+        "message": f"兌換完成，成功 {success_count} 筆，失敗 {fail_count} 筆",
+        "fails": fail_details
+    })
 
 @app.route("/add_id", methods=["POST"])
 def add_id():
