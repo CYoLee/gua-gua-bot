@@ -190,12 +190,23 @@ async def remove_notify(interaction: discord.Interaction, index: int):
         if real_index < 0 or real_index >= len(docs):
             await interaction.response.send_message("❌ index 無效 / Invalid index", ephemeral=True)
             return
-        db.collection("notifications").document(docs[real_index].id).delete()
         doc = docs[real_index]
         data = doc.to_dict()
+        db.collection("notifications").document(doc.id).delete()
         await interaction.response.send_message(f"🗑️ 已刪除 / Removed reminder #{index}: {data['message']}", ephemeral=True)
+
+        # 推送到監控頻道
+        log_channel = bot.get_channel(1356431597150408786)
+        if log_channel:
+            await log_channel.send(
+                f"🗑️ **提醒被刪除**\n"
+                f"👤 操作者：{interaction.user} ({interaction.user.id})\n"
+                f"🌐 伺服器：{interaction.guild.name} ({interaction.guild.id})\n"
+                f"📌 原提醒：{data['datetime']} - {data['message']}"
+            )
+
     except Exception as e:
-        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="edit_notify", description="編輯提醒 / Edit reminder")
 @app_commands.describe(index="提醒編號（從1開始）", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
@@ -212,11 +223,11 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             return
 
         doc = docs[real_index]
-        data = doc.to_dict()
+        old_data = doc.to_dict()
 
         # === 原時間解析 ===
         try:
-            dt_text = data["datetime"].split(" [")[0]  # e.g., '2025年4月18日 PM5:15:00'
+            dt_text = old_data["datetime"].split(" [")[0]
             orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")
         except Exception:
             orig = datetime.now(tz)
@@ -229,31 +240,37 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             h, m = map(int, time.split(":"))
             orig = orig.replace(hour=h, minute=m)
 
-        # === 套入時區 ===
         if orig.tzinfo is None:
             orig = tz.localize(orig)
         else:
             orig = orig.astimezone(tz)
 
-        # === 刪除舊的 reminder ===
         db.collection("notifications").document(doc.id).delete()
 
-        # === 新 reminder 建立資料 ===
         new_data = {
             "channel_id": str(interaction.channel_id),
             "guild_id": str(interaction.guild_id),
             "datetime": orig.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
-            "message": message if message is not None else data.get("message"),
-            "mention": mention if mention is not None else data.get("mention", "")
+            "message": message if message is not None else old_data.get("message"),
+            "mention": mention if mention is not None else old_data.get("mention", "")
         }
 
         db.collection("notifications").add(new_data)
-
         await interaction.followup.send(f"✏️ 已更新提醒 / Updated reminder #{index}", ephemeral=True)
+
+        # 推送到監控頻道
+        log_channel = bot.get_channel(1356431597150408786)
+        if log_channel:
+            await log_channel.send(
+                f"📝 **提醒被編輯**\n"
+                f"👤 操作者：{interaction.user} ({interaction.user.id})\n"
+                f"🌐 伺服器：{interaction.guild.name} ({interaction.guild.id})\n"
+                f"📌 原提醒：{old_data['datetime']} - {old_data['message']}\n"
+                f"🆕 新提醒：{new_data['datetime']} - {new_data['message']}"
+            )
 
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
-
 
 # === Help 指令 ===
 @tree.command(name="help", description="查看機器人指令說明 / View command help")
