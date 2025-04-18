@@ -202,22 +202,26 @@ async def remove_notify(interaction: discord.Interaction, index: int):
 async def edit_notify(interaction: discord.Interaction, index: int, date: str = None, time: str = None, message: str = None, mention: str = None):
     try:
         await interaction.response.defer(thinking=True, ephemeral=True)
-        docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
+        docs = list(db.collection("notifications")
+                    .where("guild_id", "==", str(interaction.guild_id))
+                    .order_by("datetime")
+                    .stream())
         real_index = index - 1
         if real_index < 0 or real_index >= len(docs):
-            await interaction.response.send_message("❌ index 無效 / Invalid index", ephemeral=True)
+            await interaction.followup.send("❌ index 無效 / Invalid index", ephemeral=True)
             return
+
         doc = docs[real_index]
         data = doc.to_dict()
 
-        # 正確解析原 datetime（保留時間與日期）
+        # === 原時間解析 ===
         try:
             dt_text = data["datetime"].split(" [")[0]  # e.g., '2025年4月18日 PM5:15:00'
-            orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")  # 不吃秒數更安全
+            orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")
         except Exception:
             orig = datetime.now(tz)
 
-        # 更新欄位
+        # === 修改時間 ===
         if date:
             y, mo, d = map(int, date.split("-"))
             orig = orig.replace(year=y, month=mo, day=d)
@@ -225,21 +229,31 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             h, m = map(int, time.split(":"))
             orig = orig.replace(hour=h, minute=m)
 
+        # === 套入時區 ===
         if orig.tzinfo is None:
             orig = tz.localize(orig)
         else:
             orig = orig.astimezone(tz)
-        data["datetime"] = orig.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
 
-        if message:
-            data["message"] = message
-        if mention:
-            data["mention"] = mention
+        # === 刪除舊的 reminder ===
+        db.collection("notifications").document(doc.id).delete()
 
-        db.collection("notifications").document(doc.id).update(data)
-        await interaction.response.send_message(f"✏️ 已更新提醒 / Updated reminder #{index}", ephemeral=True)
+        # === 新 reminder 建立資料 ===
+        new_data = {
+            "channel_id": str(interaction.channel_id),
+            "guild_id": str(interaction.guild_id),
+            "datetime": orig.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
+            "message": message if message is not None else data.get("message"),
+            "mention": mention if mention is not None else data.get("mention", "")
+        }
+
+        db.collection("notifications").add(new_data)
+
+        await interaction.followup.send(f"✏️ 已更新提醒 / Updated reminder #{index}", ephemeral=True)
+
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
+
 
 # === Help 指令 ===
 @tree.command(name="help", description="查看機器人指令說明 / View command help")
