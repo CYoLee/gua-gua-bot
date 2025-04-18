@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
 import aiohttp
+import re
 
 # === ENV ===
 load_dotenv()
@@ -34,17 +35,28 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+def parse_ampm_hour(hour_str):
+    match = re.match(r"(AM|PM)(\d+)", hour_str)
+    if not match:
+        raise ValueError(f"無法解析時間格式: {hour_str}")
+    period, hour = match.groups()
+    hour = int(hour)
+    if period == "AM":
+        return 0 if hour == 12 else hour
+    else:
+        return hour if hour == 12 else hour + 12
+
 # === ID 管理 ===
 @tree.command(name="add_id", description="新增玩家ID")
 @app_commands.describe(player_id="玩家 ID（9碼數字）")
 async def add_id(interaction: discord.Interaction, player_id: str):
     try:
         guild_id = str(interaction.guild_id)
-        path = db.collection("ids").document(guild_id).collection("players").document(player_id)
-        if path.get().exists:
-            await interaction.response.send_message(f"⚠️ 該 player_id `{player_id}` 已存在", ephemeral=True)
+        ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
+        if ref.get().exists:
+            await interaction.response.send_message(f"⚠️ player_id `{player_id}` 已存在", ephemeral=True)
         else:
-            path.set({})
+            ref.set({})
             await interaction.response.send_message(f"✅ 已新增 player_id `{player_id}`", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
@@ -55,11 +67,12 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
     try:
         guild_id = str(interaction.guild_id)
         ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
-        if not ref.get().exists:
-            await interaction.response.send_message(f"❌ 找不到該 ID `{player_id}`", ephemeral=True)
-        else:
+        if ref.get().exists:
             ref.delete()
-            await interaction.response.send_message(f"✅ 已移除 player_id `{player_id}`", ephemeral=True)
+            msg = f"✅ 已移除 player_id `{player_id}`"
+        else:
+            msg = f"❌ 找不到該 ID `{player_id}`"
+        await interaction.response.send_message(msg, ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
@@ -87,7 +100,8 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
             async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
                 result = await resp.json()
                 await interaction.response.send_message(
-                    f"🎁 回應：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```", ephemeral=True
+                    f"🎁 回應：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```",
+                    ephemeral=True
                 )
     except Exception as e:
         if not interaction.response.is_done():
@@ -120,42 +134,48 @@ async def add_notify(interaction: discord.Interaction, date: str, time: str, mes
 async def list_notify(interaction: discord.Interaction):
     try:
         docs = db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream()
-        rows = [f"{i}. `{doc.to_dict().get('datetime')}` - {doc.to_dict().get('message')}" for i, doc in enumerate(docs)]
+        rows = [f"{i+1}. `{doc.to_dict().get('datetime')}` - {doc.to_dict().get('message')}" for i, doc in enumerate(docs)]
         await interaction.response.send_message("\n".join(rows) if rows else "📭 沒有提醒資料", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="remove_notify", description="移除提醒")
-@app_commands.describe(index="提醒 index")
+@app_commands.describe(index="提醒編號（從1開始）")
 async def remove_notify(interaction: discord.Interaction, index: int):
     try:
         docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
-        if index < 0 or index >= len(docs):
+        real_index = index - 1
+        if real_index < 0 or real_index >= len(docs):
             await interaction.response.send_message("❌ index 無效", ephemeral=True)
             return
-        db.collection("notifications").document(docs[index].id).delete()
+        db.collection("notifications").document(docs[real_index].id).delete()
         await interaction.response.send_message(f"🗑️ 已刪除第 {index} 筆提醒", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="edit_notify", description="編輯提醒")
-@app_commands.describe(index="提醒 index", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
+@app_commands.describe(index="提醒編號（從1開始）", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
 async def edit_notify(interaction: discord.Interaction, index: int, date: str = None, time: str = None, message: str = None, mention: str = None):
     try:
         docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
-        if index < 0 or index >= len(docs):
+        real_index = index - 1
+        if real_index < 0 or real_index >= len(docs):
             await interaction.response.send_message("❌ index 無效", ephemeral=True)
             return
-        doc = docs[index]
+        doc = docs[real_index]
         data = doc.to_dict()
         orig = datetime.strptime(data["datetime"].split(" ")[0], "%Y年%m月%d日")
-        h, m = map(int, data["datetime"].split(" ")[-2].replace(":00", "").split(":"))
+        hour_str = data["datetime"].split(" ")[1]
+        minute_str = data["datetime"].split(" ")[2].split(":")[1]
+        hour = parse_ampm_hour(hour_str)
+        minute = int(minute_str)
+        orig = orig.replace(hour=hour, minute=minute)
         if date:
             y, mo, d = map(int, date.split("-"))
             orig = orig.replace(year=y, month=mo, day=d)
         if time:
             h, m = map(int, time.split(":"))
-        orig = orig.replace(hour=h, minute=m)
+            orig = orig.replace(hour=h, minute=m)
         data["datetime"] = tz.localize(orig).strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
         if message:
             data["message"] = message
@@ -166,7 +186,7 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
-# === Help 說明 ===
+# === Help 指令 ===
 @tree.command(name="help", description="查看機器人指令說明")
 @app_commands.describe(lang="選擇語言")
 @app_commands.choices(lang=LANG_CHOICES)
@@ -175,10 +195,10 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
         if lang.value == "en":
             content = (
                 "**GuaGuaBOT Help (English)**\n"
-                "`/add_id` - Add player ID\n"
-                "`/remove_id` - Remove ID\n"
-                "`/list_ids` - List IDs\n"
-                "`/redeem_submit` - Submit code\n"
+                "`/add_id` - Add a player ID\n"
+                "`/remove_id` - Remove a player ID\n"
+                "`/list_ids` - List player IDs\n"
+                "`/redeem_submit` - Submit redeem code\n"
                 "`/add_notify` - Add reminder\n"
                 "`/list_notify` - List reminders\n"
                 "`/remove_notify` - Remove reminder\n"
@@ -187,9 +207,9 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
         else:
             content = (
                 "**呱呱BOT 指令說明（繁體中文）**\n"
-                "`/add_id` - 新增 ID\n"
-                "`/remove_id` - 移除 ID\n"
-                "`/list_ids` - 列出所有 ID\n"
+                "`/add_id` - 新增玩家 ID\n"
+                "`/remove_id` - 移除玩家 ID\n"
+                "`/list_ids` - 顯示所有 ID\n"
                 "`/redeem_submit` - 提交兌換碼\n"
                 "`/add_notify` - 新增提醒\n"
                 "`/list_notify` - 查看提醒\n"
@@ -200,7 +220,7 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
-# === 提醒推播 ===
+# === 通知推播 ===
 @tasks.loop(seconds=30)
 async def notify_loop():
     now = datetime.now(tz)
@@ -213,10 +233,10 @@ async def notify_loop():
             try:
                 await channel.send(f'{data.get("mention", "")} ⏰ **活動提醒** ⏰\n{data["message"]}')
             except Exception as e:
-                print(f"[Error] 推播失敗: {e}")
+                print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
 
-# === 上線同步 ===
+# === 上線後同步 ===
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
@@ -224,7 +244,7 @@ async def on_ready():
         cmds = await tree.sync()
         print(f"✅ Synced {len(cmds)} global commands")
     except Exception as e:
-        print(f"❌ Sync failed: {e}")
+        print(f"❌ Failed to sync commands: {e}")
     notify_loop.start()
 
 bot.run(TOKEN)
