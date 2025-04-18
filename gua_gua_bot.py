@@ -87,14 +87,14 @@ async def add_notify(interaction: discord.Interaction, date: str, time: str, mes
 
 @tree.command(name="list_notify", description="查看提醒列表")
 async def list_notify(interaction: discord.Interaction):
-    docs = db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream()
+    docs = db.collection("notifications").where(filter=("guild_id", "==", str(interaction.guild_id))).order_by("datetime").stream()
     rows = [f"{i}. `{doc.to_dict().get('datetime')}` - {doc.to_dict().get('message')}" for i, doc in enumerate(docs)]
     await interaction.response.send_message("\n".join(rows) if rows else "📭 沒有提醒資料", ephemeral=True)
 
 @tree.command(name="remove_notify", description="移除提醒")
 @app_commands.describe(index="提醒 index")
 async def remove_notify(interaction: discord.Interaction, index: int):
-    docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
+    docs = list(db.collection("notifications").where(filter=("guild_id", "==", str(interaction.guild_id))).order_by("datetime").stream())
     if index < 0 or index >= len(docs):
         await interaction.response.send_message("❌ index 無效", ephemeral=True)
     else:
@@ -104,7 +104,7 @@ async def remove_notify(interaction: discord.Interaction, index: int):
 @tree.command(name="edit_notify", description="編輯提醒")
 @app_commands.describe(index="提醒 index", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
 async def edit_notify(interaction: discord.Interaction, index: int, date: str = None, time: str = None, message: str = None, mention: str = None):
-    docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
+    docs = list(db.collection("notifications").where(filter=("guild_id", "==", str(interaction.guild_id))).order_by("datetime").stream())
     if index < 0 or index >= len(docs):
         await interaction.response.send_message("❌ index 無效", ephemeral=True)
         return
