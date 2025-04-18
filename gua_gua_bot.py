@@ -40,7 +40,7 @@ tree = bot.tree
 @app_commands.describe(player_ids="可以用逗號(,)分隔的玩家 ID / Player IDs separated by comma(,)")
 async def add_id(interaction: discord.Interaction, player_ids: str):
     try:
-        await interaction.response.defer(thinking=True, ephemeral=True)  # ⬅ 加這一行
+        await interaction.response.defer(thinking=True, ephemeral=True)
         guild_id = str(interaction.guild_id)
         ids = [pid.strip() for pid in player_ids.split(",") if pid.strip()]
         success = []
@@ -113,6 +113,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
 @app_commands.describe(date="YYYY-MM-DD, multiple allowed", time="HH:MM, multiple allowed", message="提醒訊息 / Reminder message", mention="標記對象（可空） / Mention target (optional)")
 async def add_notify(interaction: discord.Interaction, date: str, time: str, message: str, mention: str = ""):
     try:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         dates = [d.strip() for d in date.split(",")]
         times = [t.strip() for t in time.split(",")]
         count = 0
@@ -127,9 +128,9 @@ async def add_notify(interaction: discord.Interaction, date: str, time: str, mes
                     "mention": mention
                 })
                 count += 1
-        await interaction.response.send_message(f"✅ 已新增 / Added {count} 筆提醒", ephemeral=True)
+        await interaction.followup.send(f"✅ 已新增 / Added {count} 筆提醒", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="list_notify", description="查看提醒列表")
 async def list_notify(interaction: discord.Interaction):
@@ -138,19 +139,25 @@ async def list_notify(interaction: discord.Interaction):
         rows = []
         for i, doc in enumerate(docs):
             data = doc.to_dict()
-            dt = datetime.strptime(data["datetime"].split(" ")[0], "%Y年%m月%d日")
-            hour_str = data["datetime"].split(" ")[1]
-            minute_str = data["datetime"].split(" ")[2].split(":")[1]
-            hour = 0 if "AM" in hour_str and "12" in hour_str else int(hour_str.replace("AM", "").replace("PM", "")) + (12 if "PM" in hour_str and "12" not in hour_str else 0)
-            minute = int(minute_str)
-            dt = dt.replace(hour=hour, minute=minute)
-            time_str = dt.strftime("%Y/%m/%d %H:%M")
+            try:
+                parts = data["datetime"].split(" ")
+                if len(parts) < 3:
+                    raise ValueError("Invalid datetime format")
+                dt = datetime.strptime(parts[0], "%Y年%m月%d日")
+                hour_str = parts[1]
+                minute_str = parts[2].split(":")[1]
+                hour = 0 if "AM" in hour_str and "12" in hour_str else int(hour_str.replace("AM", "").replace("PM", "")) + (12 if "PM" in hour_str and "12" not in hour_str else 0)
+                minute = int(minute_str)
+                dt = dt.replace(hour=hour, minute=minute)
+                time_str = dt.strftime("%Y/%m/%d %H:%M")
+            except Exception:
+                time_str = "❓ 時間解析錯誤 / Time error"
             rows.append(f"{i+1}. {time_str} - {data.get('message')}")
         await interaction.response.send_message("\n".join(rows) if rows else "📭 沒有提醒資料 / No reminders found", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
-@tree.command(name="remove_notify", description="移除提醒")
+@tree.command(name="remove_notify", description="移除提醒 / Remove reminder")
 @app_commands.describe(index="提醒編號（從1開始）")
 async def remove_notify(interaction: discord.Interaction, index: int):
     try:
@@ -160,14 +167,18 @@ async def remove_notify(interaction: discord.Interaction, index: int):
             await interaction.response.send_message("❌ index 無效 / Invalid index", ephemeral=True)
             return
         db.collection("notifications").document(docs[real_index].id).delete()
-        await interaction.response.send_message(f"🗑️ 已刪除 / Removed reminder #{index}", ephemeral=True)
+        doc = docs[real_index]
+        data = doc.to_dict()
+        db.collection("notifications").document(doc.id).delete()
+        await interaction.response.send_message(f"🗑️ 已刪除 / Removed reminder #{index}: {data['message']}", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
-@tree.command(name="edit_notify", description="編輯提醒")
+@tree.command(name="edit_notify", description="編輯提醒 / Edit reminder")
 @app_commands.describe(index="提醒編號（從1開始）", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
 async def edit_notify(interaction: discord.Interaction, index: int, date: str = None, time: str = None, message: str = None, mention: str = None):
     try:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
         real_index = index - 1
         if real_index < 0 or real_index >= len(docs):
