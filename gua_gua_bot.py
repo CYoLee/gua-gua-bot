@@ -31,23 +31,38 @@ db = firestore.client()
 
 # === Discord Init ===
 intents = discord.Intents.default()
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 # === ID 管理 ===
-@tree.command(name="add_id", description="新增玩家ID")
-@app_commands.describe(player_id="玩家 ID（9碼數字）")
-async def add_id(interaction: discord.Interaction, player_id: str):
+@tree.command(name="add_id", description="新增一個或多個玩家 ID")
+@app_commands.describe(player_ids="用逗號分隔的玩家 ID，例如：123456789,987654321")
+async def add_id(interaction: discord.Interaction, player_ids: str):
     try:
         guild_id = str(interaction.guild_id)
-        ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
-        if ref.get().exists:
-            await interaction.response.send_message(f"⚠️ player_id `{player_id}` 已存在", ephemeral=True)
-        else:
-            ref.set({})
-            await interaction.response.send_message(f"✅ 已新增 player_id `{player_id}`", ephemeral=True)
+        ids = [pid.strip() for pid in player_ids.split(",") if pid.strip()]
+        success = []
+        exists = []
+        for pid in ids:
+            ref = db.collection("ids").document(guild_id).collection("players").document(pid)
+            if ref.get().exists:
+                exists.append(pid)
+            else:
+                ref.set({})
+                success.append(pid)
+
+        msg = []
+        if success:
+            msg.append(f"✅ 已新增：`{', '.join(success)}`")
+        if exists:
+            msg.append(f"⚠️ 已存在：`{', '.join(exists)}`")
+        if not msg:
+            msg = ["⚠️ 沒有有效的 ID 輸入"]
+        await interaction.response.send_message("\n".join(msg), ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+
 
 @tree.command(name="remove_id", description="移除玩家ID")
 @app_commands.describe(player_id="要移除的 ID")
@@ -90,7 +105,6 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                 result = await resp.json()
                 await interaction.followup.send(
                     f"🎁 回應：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```",
-                    ephemeral=True
                 )
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
