@@ -99,6 +99,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         payload = {"code": code, "guild_id": guild_id}
         if player_id:
             payload["player_id"] = player_id
+
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
                 try:
@@ -112,7 +113,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                     msg = f"❌ 發生錯誤：{e}"
                 await interaction.followup.send(f"🎁 回應：{msg}", ephemeral=True)
 
-    except Exception as e:  # ⬅️ 加這段就能正常執行了
+    except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
 # === 活動提醒 ===
@@ -188,7 +189,6 @@ async def remove_notify(interaction: discord.Interaction, index: int):
         db.collection("notifications").document(docs[real_index].id).delete()
         doc = docs[real_index]
         data = doc.to_dict()
-        db.collection("notifications").document(doc.id).delete()
         await interaction.response.send_message(f"🗑️ 已刪除 / Removed reminder #{index}: {data['message']}", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
@@ -205,19 +205,28 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             return
         doc = docs[real_index]
         data = doc.to_dict()
-        # 重建 datetime（簡化為只解析 date & time，不使用原 datetime 拆 AM/PM）
-        orig = datetime.strptime(data["datetime"].split(" ")[0], "%Y年%m月%d日")
+
+        # 正確解析原 datetime（保留時間與日期）
+        try:
+            dt_text = data["datetime"].split(" [")[0]  # e.g., '2025年4月18日 PM5:15:00'
+            orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")  # 不吃秒數更安全
+        except Exception:
+            orig = datetime.now(tz)
+
+        # 更新欄位
         if date:
             y, mo, d = map(int, date.split("-"))
             orig = orig.replace(year=y, month=mo, day=d)
         if time:
             h, m = map(int, time.split(":"))
             orig = orig.replace(hour=h, minute=m)
+
         data["datetime"] = tz.localize(orig).strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
         if message:
             data["message"] = message
         if mention:
             data["mention"] = mention
+
         db.collection("notifications").document(doc.id).update(data)
         await interaction.response.send_message(f"✏️ 已更新提醒 / Updated reminder #{index}", ephemeral=True)
     except Exception as e:

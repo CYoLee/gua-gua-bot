@@ -12,3 +12,4 @@ playwright==1.51.0
 gunicorn==21.2.0
 python-dotenv
 pytz
+nest_asyncio
