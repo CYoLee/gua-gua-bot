@@ -9,10 +9,12 @@ from discord import app_commands
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
+import aiohttp
 
 # === ENV ===
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+REDEEM_API_URL = os.getenv("REDEEM_API_URL")
 GUILD_IDS = [int(gid.strip()) for gid in os.getenv("GUILD_IDS", "").split(",")]
 tz = pytz.timezone("Asia/Taipei")
 
@@ -35,70 +37,91 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# === 指令區 ===
-@tree.command(name="redeem_submit", description="提交兌換任務")
-@app_commands.describe(code="兌換碼", player_id="玩家 ID（可選）", guild_id="伺服器 ID（可選）")
-async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None, guild_id: str = None):
-    import aiohttp
-    url = os.getenv("REDEEM_API_URL") + "/redeem_submit"
+# === ID 管理 ===
+@tree.command(name="add_id", description="新增玩家ID")
+@app_commands.describe(player_id="玩家 ID（9碼數字）")
+async def add_id(interaction: discord.Interaction, player_id: str):
+    guild_id = str(interaction.guild_id)
+    db.collection("ids").document(guild_id).collection("players").document(player_id).set({})
+    await interaction.response.send_message(f"✅ 已新增 player_id `{player_id}`", ephemeral=True)
+
+@tree.command(name="remove_id", description="移除玩家ID")
+@app_commands.describe(player_id="要移除的 ID")
+async def remove_id(interaction: discord.Interaction, player_id: str):
+    guild_id = str(interaction.guild_id)
+    db.collection("ids").document(guild_id).collection("players").document(player_id).delete()
+    await interaction.response.send_message(f"✅ 已移除 player_id `{player_id}`", ephemeral=True)
+
+@tree.command(name="list_ids", description="列出所有玩家 ID")
+async def list_ids(interaction: discord.Interaction):
+    guild_id = str(interaction.guild_id)
+    docs = db.collection("ids").document(guild_id).collection("players").stream()
+    ids = [doc.id for doc in docs]
+    if not ids:
+        await interaction.response.send_message("📭 沒有任何 ID", ephemeral=True)
+    else:
+        await interaction.response.send_message("📋 玩家 ID：\n- " + "\n- ".join(ids), ephemeral=True)
+
+# === Redeem 兌換 ===
+@tree.command(name="redeem_submit", description="提交兌換碼")
+@app_commands.describe(code="兌換碼", player_id="玩家 ID（選填）")
+async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
+    guild_id = str(interaction.guild_id)
     payload = {"code": code}
     if player_id:
         payload["player_id"] = player_id
-    if guild_id:
         payload["guild_id"] = guild_id
-    elif not player_id:
-        payload["guild_id"] = str(interaction.guild_id)
+    else:
+        payload["guild_id"] = guild_id
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
+        async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
             result = await resp.json()
-    await interaction.response.send_message(f"🎁 結果：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```", ephemeral=True)
+            await interaction.response.send_message(f"🎁 回應：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```", ephemeral=True)
 
-@tree.command(name="add_notify", description="新增活動提醒")
-@app_commands.describe(date="YYYY-MM-DD，可逗號分隔", time="HH:MM，可逗號分隔", message="提醒內容", mention="要標記的對象（如 @everyone）")
+# === 活動提醒 ===
+@tree.command(name="add_notify", description="新增提醒")
+@app_commands.describe(date="YYYY-MM-DD,可多個", time="HH:MM,可多個", message="提醒訊息", mention="標記對象（可空）")
 async def add_notify(interaction: discord.Interaction, date: str, time: str, message: str, mention: str = ""):
-    try:
-        dates = [d.strip() for d in date.split(",")]
-        times = [t.strip() for t in time.split(",")]
-        created = 0
-        for d in dates:
-            for t in times:
-                dt = tz.localize(datetime.strptime(f"{d} {t}", "%Y-%m-%d %H:%M"))
-                db.collection("notifications").add({
-                    "channel_id": str(interaction.channel_id),
-                    "guild_id": str(interaction.guild_id),
-                    "datetime": dt.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
-                    "message": message,
-                    "mention": mention
-                })
-                created += 1
-        await interaction.response.send_message(f"✅ 已新增 {created} 筆提醒", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ 新增失敗: {str(e)}", ephemeral=True)
+    dates = [d.strip() for d in date.split(",")]
+    times = [t.strip() for t in time.split(",")]
+    count = 0
+    for d in dates:
+        for t in times:
+            dt = tz.localize(datetime.strptime(f"{d} {t}", "%Y-%m-%d %H:%M"))
+            db.collection("notifications").add({
+                "channel_id": str(interaction.channel_id),
+                "guild_id": str(interaction.guild_id),
+                "datetime": dt.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
+                "message": message,
+                "mention": mention
+            })
+            count += 1
+    await interaction.response.send_message(f"✅ 已新增 {count} 筆提醒", ephemeral=True)
 
-@tree.command(name="list_notify", description="查看所有提醒")
+@tree.command(name="list_notify", description="查看提醒列表")
 async def list_notify(interaction: discord.Interaction):
     docs = db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream()
-    result = []
+    rows = []
     for i, doc in enumerate(docs):
         data = doc.to_dict()
-        result.append(f"{i}. `{data.get('datetime')}` - {data.get('message')}")
-    if not result:
+        rows.append(f"{i}. `{data.get('datetime')}` - {data.get('message')}")
+    if not rows:
         await interaction.response.send_message("📭 沒有提醒資料", ephemeral=True)
     else:
-        await interaction.response.send_message("\n".join(result), ephemeral=True)
+        await interaction.response.send_message("\n".join(rows), ephemeral=True)
 
-@tree.command(name="remove_notify", description="刪除提醒 (index)")
-@app_commands.describe(index="要刪除的提醒 index")
+@tree.command(name="remove_notify", description="移除提醒")
+@app_commands.describe(index="提醒 index")
 async def remove_notify(interaction: discord.Interaction, index: int):
     docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
     if index < 0 or index >= len(docs):
         await interaction.response.send_message("❌ index 無效", ephemeral=True)
-        return
-    db.collection("notifications").document(docs[index].id).delete()
-    await interaction.response.send_message(f"🗑️ 已刪除第 {index} 筆提醒", ephemeral=True)
+    else:
+        db.collection("notifications").document(docs[index].id).delete()
+        await interaction.response.send_message(f"🗑️ 已刪除第 {index} 筆提醒", ephemeral=True)
 
-@tree.command(name="edit_notify", description="編輯提醒 (index)")
-@app_commands.describe(index="index", date="新日期", time="新時間", message="新訊息", mention="新 mention")
+@tree.command(name="edit_notify", description="編輯提醒")
+@app_commands.describe(index="提醒 index", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
 async def edit_notify(interaction: discord.Interaction, index: int, date: str = None, time: str = None, message: str = None, mention: str = None):
     docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
     if index < 0 or index >= len(docs):
@@ -122,7 +145,7 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
     db.collection("notifications").document(doc.id).update(data)
     await interaction.response.send_message(f"✏️ 已更新第 {index} 筆提醒", ephemeral=True)
 
-# === 自動通知推播 ===
+# === 通知推播 ===
 @tasks.loop(seconds=30)
 async def notify_loop():
     now = datetime.now(tz)
@@ -133,22 +156,21 @@ async def notify_loop():
         channel = bot.get_channel(int(data["channel_id"]))
         if channel:
             try:
-                msg = f'{data.get("mention", "")} ⏰ **活動提醒** ⏰\n{data["message"]}'
-                await channel.send(msg)
+                await channel.send(f'{data.get("mention", "")} ⏰ **活動提醒** ⏰\n{data["message"]}')
             except Exception as e:
-                print(f"[提醒發送失敗] {e}")
+                print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
 
-# === 啟動 BOT ===
+# === 登入與強制重建指令 ===
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     for gid in GUILD_IDS:
         try:
-            synced = await tree.sync(guild=discord.Object(id=gid))
-            print(f"✅ Synced {len(synced)} commands to guild {gid}")
+            cmds = await tree.sync(guild=discord.Object(id=gid))
+            print(f"✅ Synced {len(cmds)} commands to guild {gid}")
         except Exception as e:
-            print(f"❌ Sync failed for guild {gid}: {e}")
+            print(f"❌ Failed to sync to guild {gid}: {e}")
     notify_loop.start()
 
 bot.run(TOKEN)
