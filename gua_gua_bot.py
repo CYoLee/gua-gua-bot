@@ -126,6 +126,36 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
     db.collection("notifications").document(doc.id).update(data)
     await interaction.response.send_message(f"✏️ 已更新第 {index} 筆提醒", ephemeral=True)
 
+# === 幫助說明指令 ===
+@tree.command(name="help", description="查看機器人指令說明")
+@app_commands.describe(lang="語言 Language（zh / en）")
+async def help_command(interaction: discord.Interaction, lang: str = "zh"):
+    if lang.lower() == "en":
+        content = (
+            "**GuaGuaBOT Help (English)**\n"
+            "`/add_id` - Add a player ID to the guild list\n"
+            "`/remove_id` - Remove a player ID\n"
+            "`/list_ids` - List all player IDs\n"
+            "`/redeem_submit` - Submit redeem code (single or all IDs)\n"
+            "`/add_notify` - Add scheduled reminders\n"
+            "`/list_notify` - List all reminders\n"
+            "`/remove_notify` - Remove a reminder by index\n"
+            "`/edit_notify` - Edit a reminder\n"
+        )
+    else:
+        content = (
+            "**呱呱BOT 指令說明（繁體中文）**\n"
+            "`/add_id` - 新增玩家 ID\n"
+            "`/remove_id` - 移除玩家 ID\n"
+            "`/list_ids` - 顯示目前已登錄的所有 ID\n"
+            "`/redeem_submit` - 提交兌換碼（可單人或全部）\n"
+            "`/add_notify` - 新增活動提醒（可多日多時間）\n"
+            "`/list_notify` - 查看所有活動提醒\n"
+            "`/remove_notify` - 移除指定提醒\n"
+            "`/edit_notify` - 編輯提醒內容\n"
+        )
+    await interaction.response.send_message(content, ephemeral=True)
+
 # === 通知推播 ===
 @tasks.loop(seconds=30)
 async def notify_loop():
