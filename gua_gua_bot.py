@@ -103,9 +103,8 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
                 result = await resp.json()
-                await interaction.followup.send(
-                    f"🎁 回應：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```",
-                )
+                msg = result.get("message") or result.get("reason") or "❓ 未知回應 / Unknown response"
+                await interaction.followup.send(f"🎁 回應：{msg}", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
