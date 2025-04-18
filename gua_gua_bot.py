@@ -76,7 +76,7 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
             msg = f"❌ 找不到該 ID / ID not found `{player_id}`"
         await interaction.response.send_message(msg, ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="list_ids", description="列出所有玩家 ID / Show all player ID list")
 async def list_ids(interaction: discord.Interaction):
@@ -87,7 +87,7 @@ async def list_ids(interaction: discord.Interaction):
         msg = "📋 玩家 ID / Player IDs：\n- " + "\n- ".join(ids) if ids else "📭 沒有任何 ID / No ID found"
         await interaction.response.send_message(msg, ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 # === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
@@ -179,7 +179,7 @@ async def list_notify(interaction: discord.Interaction):
             rows.append(f"{i+1}. {time_str} - {data.get('message')}")
         await interaction.response.send_message("\n".join(rows) if rows else "📭 沒有提醒資料 / No reminders found", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="remove_notify", description="移除提醒 / Remove reminder")
 @app_commands.describe(index="提醒編號（從1開始）")
@@ -195,7 +195,7 @@ async def remove_notify(interaction: discord.Interaction, index: int):
         data = doc.to_dict()
         await interaction.response.send_message(f"🗑️ 已刪除 / Removed reminder #{index}: {data['message']}", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="edit_notify", description="編輯提醒 / Edit reminder")
 @app_commands.describe(index="提醒編號（從1開始）", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
@@ -225,7 +225,12 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             h, m = map(int, time.split(":"))
             orig = orig.replace(hour=h, minute=m)
 
-        data["datetime"] = tz.localize(orig).strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
+        if orig.tzinfo is None:
+            orig = tz.localize(orig)
+        else:
+            orig = orig.astimezone(tz)
+        data["datetime"] = orig.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
+
         if message:
             data["message"] = message
         if mention:
@@ -234,7 +239,7 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
         db.collection("notifications").document(doc.id).update(data)
         await interaction.response.send_message(f"✏️ 已更新提醒 / Updated reminder #{index}", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 # === Help 指令 ===
 @tree.command(name="help", description="查看機器人指令說明 / View command help")
