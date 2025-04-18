@@ -139,16 +139,26 @@ async def list_notify(interaction: discord.Interaction):
         for i, doc in enumerate(docs):
             data = doc.to_dict()
             try:
+                # 例：'2025年4月18日 PM5:15:00 [UTC+8]'
                 parts = data["datetime"].split(" ")
-                if len(parts) < 3:
+                if len(parts) < 2:
                     raise ValueError("Invalid datetime format")
-                dt = datetime.strptime(parts[0], "%Y年%m月%d日")
-                hour_part = parts[1]
-                minute = int(parts[2].split(":")[1])  # <-- 修正這行
 
-                hour = 0 if "AM" in hour_part and "12" in hour_part else int(hour_part.replace("AM", "").replace("PM", "")) + (
-                    12 if "PM" in hour_part and "12" not in hour_part else 0
-                )
+                # 日期處理
+                dt = datetime.strptime(parts[0], "%Y年%m月%d日")
+
+                # 時間處理：PM5:15:00
+                time_str = parts[1]  # "PM5:15:00"
+                ampm = "AM" if time_str.startswith("AM") else "PM"
+                time_only = time_str.replace("AM", "").replace("PM", "")
+                hour, minute, *_ = map(int, time_only.split(":"))
+
+                # 轉換成 24 小時制
+                if ampm == "PM" and hour != 12:
+                    hour += 12
+                if ampm == "AM" and hour == 12:
+                    hour = 0
+
                 dt = dt.replace(hour=hour, minute=minute)
                 time_str = dt.strftime("%Y/%m/%d %H:%M")
             except Exception:
