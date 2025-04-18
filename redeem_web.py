@@ -77,46 +77,55 @@ def redeem_submit():
     if not code:
         return jsonify({"success": False, "reason": "缺少 code"}), 400
 
-    if player_id:
-        # ✅ 單人模式若有 guild_id 且該 ID 不存在於 Firestore → 自動新增
-        if guild_id:
-            player_ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
-            if not player_ref.get().exists:
-                player_ref.set({"auto_added": True})
+    async def async_main():
+        if player_id:
+            # ✅ 單人模式：有 guild_id 就補進 Firestore
+            if guild_id:
+                player_ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
+                if not player_ref.get().exists:
+                    player_ref.set({"auto_added": True})
 
-        result = asyncio.run(run_redeem(player_id, code))
-        return jsonify(result)
+            result = await run_redeem(player_id, code)
+            return result
 
-    if not guild_id:
-        return jsonify({"success": False, "reason": "多人兌換需提供 guild_id"}), 400
+        if not guild_id:
+            return {"success": False, "reason": "多人兌換需提供 guild_id"}
 
-    players_ref = db.collection("ids").document(guild_id).collection("players")
-    docs = players_ref.stream()
-    player_ids = [doc.id for doc in docs]
+        players_ref = db.collection("ids").document(guild_id).collection("players")
+        docs = players_ref.stream()
+        player_ids = [doc.id for doc in docs]
 
-    if not player_ids:
-        return jsonify({"success": False, "reason": "此 guild_id 下沒有任何 player_id"}), 404
+        if not player_ids:
+            return {"success": False, "reason": "此 guild_id 下沒有任何 player_id"}
 
-    success_count = 0
-    fail_count = 0
-    fail_details = []
+        tasks = [run_redeem(pid, code) for pid in player_ids]
+        results = await asyncio.gather(*tasks)
 
-    for pid in player_ids:
-        result = asyncio.run(run_redeem(pid, code))
-        if result.get("success"):
-            success_count += 1
-        else:
-            fail_count += 1
-            if len(fail_details) < 10:
-                fail_details.append({
-                    "player_id": pid,
-                    "reason": result.get("reason", "未知錯誤")
-                })
+        success_count = 0
+        fail_count = 0
+        fail_details = []
 
-    return jsonify({
-        "message": f"兌換完成，成功 {success_count} 筆，失敗 {fail_count} 筆",
-        "fails": fail_details
-    })
+        for result in results:
+            if result.get("success"):
+                success_count += 1
+            else:
+                fail_count += 1
+                if len(fail_details) < 10:
+                    fail_details.append({
+                        "player_id": result.get("player_id"),
+                        "reason": result.get("reason", "未知錯誤")
+                    })
+
+        return {
+            "message": f"兌換完成，成功 {success_count} 筆，失敗 {fail_count} 筆",
+            "fails": fail_details
+        }
+
+    # 用 nest_asyncio 兼容 Flask 同步框架
+    import nest_asyncio
+    nest_asyncio.apply()
+    result = asyncio.run(async_main())
+    return jsonify(result)
 
 @app.route("/add_id", methods=["POST"])
 def add_id():

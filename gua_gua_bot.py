@@ -99,13 +99,18 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         payload = {"code": code, "guild_id": guild_id}
         if player_id:
             payload["player_id"] = player_id
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
-                result = await resp.json()
-                msg = result.get("message") or result.get("reason") or "❓ 未知回應 / Unknown response"
-                await interaction.followup.send(f"🎁 回應：{msg}", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
+                    try:
+                        if resp.headers.get("Content-Type", "").startswith("application/json"):
+                            result = await resp.json()
+                            msg = result.get("message") or result.get("reason") or "❓ 未知回應 / Unknown response"
+                        else:
+                            text = await resp.text()
+                            msg = f"⚠️ 非 JSON 回應：{text}"
+                    except Exception as e:
+                        msg = f"❌ 發生錯誤：{e}"
+                    await interaction.followup.send(f"🎁 回應：{msg}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
