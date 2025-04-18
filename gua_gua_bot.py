@@ -222,8 +222,23 @@ async def remove_notify(interaction: discord.Interaction, index: int):
         await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="edit_notify", description="編輯提醒 / Edit reminder")
-@app_commands.describe(index="提醒編號（從1開始）", date="新日期 YYYY-MM-DD", time="新時間 HH:MM", message="新訊息", mention="新標記")
-async def edit_notify(interaction: discord.Interaction, index: int, date: str = None, time: str = None, message: str = None, mention: str = None):
+@app_commands.describe(
+    index="提醒編號（從1開始）",
+    date="新日期 YYYY-MM-DD",
+    time="新時間 HH:MM",
+    message="新訊息",
+    mention="新標記",
+    target_channel="提醒要送出的頻道（可選）"
+)
+async def edit_notify(
+    interaction: discord.Interaction,
+    index: int,
+    date: str = None,
+    time: str = None,
+    message: str = None,
+    mention: str = None,
+    target_channel: discord.TextChannel = None
+):
     try:
         await interaction.response.defer(thinking=True, ephemeral=True)
         docs = list(db.collection("notifications")
@@ -238,15 +253,14 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
         doc = docs[real_index]
         old_data = doc.to_dict()
 
-        # === 原時間解析 ===
+        # 原時間解析
         try:
-            dt_text = old_data["datetime"].split(" [")[0]
+            dt_text = old_data["datetime"].split(" [")[0]  # e.g., 2025年4月18日 PM5:15:00
             orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")
         except Exception:
-            # 回退用原字串不解析，直接保留原 datetime
-            orig = tz.localize(datetime.strptime(old_data["datetime"].split(" [")[0], "%Y年%m月%d日 %p%I:%M"))
+            orig = datetime.now(tz)
 
-        # === 修改時間 ===
+        # 修改時間
         if date:
             y, mo, d = map(int, date.split("-"))
             orig = orig.replace(year=y, month=mo, day=d)
@@ -254,15 +268,18 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             h, m = map(int, time.split(":"))
             orig = orig.replace(hour=h, minute=m)
 
+        # 套用時區
         if orig.tzinfo is None:
             orig = tz.localize(orig)
         else:
             orig = orig.astimezone(tz)
 
+        # 刪除舊的
         db.collection("notifications").document(doc.id).delete()
 
+        # 建立新的 reminder
         new_data = {
-            "channel_id": str(interaction.channel_id),
+            "channel_id": str(target_channel.id if target_channel else old_data.get("channel_id", interaction.channel_id)),
             "guild_id": str(interaction.guild_id),
             "datetime": orig.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
             "message": message if message is not None else old_data.get("message"),
