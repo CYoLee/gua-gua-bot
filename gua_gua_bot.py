@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
 import aiohttp
-import re
 
 # === ENV ===
 load_dotenv()
@@ -34,17 +33,6 @@ db = firestore.client()
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
-
-def parse_ampm_hour(hour_str):
-    match = re.match(r"(AM|PM)(\d+)", hour_str)
-    if not match:
-        raise ValueError(f"無法解析時間格式: {hour_str}")
-    period, hour = match.groups()
-    hour = int(hour)
-    if period == "AM":
-        return 0 if hour == 12 else hour
-    else:
-        return hour if hour == 12 else hour + 12
 
 # === ID 管理 ===
 @tree.command(name="add_id", description="新增玩家ID")
@@ -92,6 +80,7 @@ async def list_ids(interaction: discord.Interaction):
 @app_commands.describe(code="兌換碼", player_id="玩家 ID（選填）")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     try:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         guild_id = str(interaction.guild_id)
         payload = {"code": code, "guild_id": guild_id}
         if player_id:
@@ -99,13 +88,12 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
                 result = await resp.json()
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"🎁 回應：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```",
                     ephemeral=True
                 )
     except Exception as e:
-        if not interaction.response.is_done():
-            await interaction.response.send_message(f"❌ 發生錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒")
@@ -164,12 +152,8 @@ async def edit_notify(interaction: discord.Interaction, index: int, date: str = 
             return
         doc = docs[real_index]
         data = doc.to_dict()
+        # 重建 datetime（簡化為只解析 date & time，不使用原 datetime 拆 AM/PM）
         orig = datetime.strptime(data["datetime"].split(" ")[0], "%Y年%m月%d日")
-        hour_str = data["datetime"].split(" ")[1]
-        minute_str = data["datetime"].split(" ")[2].split(":")[1]
-        hour = parse_ampm_hour(hour_str)
-        minute = int(minute_str)
-        orig = orig.replace(hour=hour, minute=minute)
         if date:
             y, mo, d = map(int, date.split("-"))
             orig = orig.replace(year=y, month=mo, day=d)
@@ -245,6 +229,7 @@ async def on_ready():
         print(f"✅ Synced {len(cmds)} global commands")
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
-    notify_loop.start()
+    if not notify_loop.is_running():
+        notify_loop.start()
 
 bot.run(TOKEN)
