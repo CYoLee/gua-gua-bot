@@ -15,18 +15,11 @@ import aiohttp
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 REDEEM_API_URL = os.getenv("REDEEM_API_URL")
-GUILD_IDS = [int(gid.strip()) for gid in os.getenv("GUILD_IDS", "").split(",")]
 tz = pytz.timezone("Asia/Taipei")
 
 # === Firebase Init ===
 cred_env = os.getenv("FIREBASE_CREDENTIALS") or ""
-try:
-    if cred_env.startswith("{"):
-        cred_dict = json.loads(cred_env)
-    else:
-        cred_dict = json.loads(base64.b64decode(cred_env).decode("utf-8"))
-except Exception as e:
-    raise Exception(f"無法解析 FIREBASE_CREDENTIALS: {e}")
+cred_dict = json.loads(base64.b64decode(cred_env).decode("utf-8")) if not cred_env.startswith("{") else json.loads(cred_env)
 cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
@@ -57,22 +50,16 @@ async def list_ids(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     docs = db.collection("ids").document(guild_id).collection("players").stream()
     ids = [doc.id for doc in docs]
-    if not ids:
-        await interaction.response.send_message("📭 沒有任何 ID", ephemeral=True)
-    else:
-        await interaction.response.send_message("📋 玩家 ID：\n- " + "\n- ".join(ids), ephemeral=True)
+    await interaction.response.send_message("📋 玩家 ID：\n- " + "\n- ".join(ids) if ids else "📭 沒有任何 ID", ephemeral=True)
 
 # === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼")
 @app_commands.describe(code="兌換碼", player_id="玩家 ID（選填）")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     guild_id = str(interaction.guild_id)
-    payload = {"code": code}
+    payload = {"code": code, "guild_id": guild_id}
     if player_id:
         payload["player_id"] = player_id
-        payload["guild_id"] = guild_id
-    else:
-        payload["guild_id"] = guild_id
     async with aiohttp.ClientSession() as session:
         async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
             result = await resp.json()
@@ -101,14 +88,8 @@ async def add_notify(interaction: discord.Interaction, date: str, time: str, mes
 @tree.command(name="list_notify", description="查看提醒列表")
 async def list_notify(interaction: discord.Interaction):
     docs = db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream()
-    rows = []
-    for i, doc in enumerate(docs):
-        data = doc.to_dict()
-        rows.append(f"{i}. `{data.get('datetime')}` - {data.get('message')}")
-    if not rows:
-        await interaction.response.send_message("📭 沒有提醒資料", ephemeral=True)
-    else:
-        await interaction.response.send_message("\n".join(rows), ephemeral=True)
+    rows = [f"{i}. `{doc.to_dict().get('datetime')}` - {doc.to_dict().get('message')}" for i, doc in enumerate(docs)]
+    await interaction.response.send_message("\n".join(rows) if rows else "📭 沒有提醒資料", ephemeral=True)
 
 @tree.command(name="remove_notify", description="移除提醒")
 @app_commands.describe(index="提醒 index")
@@ -161,16 +142,15 @@ async def notify_loop():
                 print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
 
-# === 登入與強制重建指令 ===
+# === 上線後同步所有全域指令 ===
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
-    for gid in GUILD_IDS:
-        try:
-            cmds = await tree.sync(guild=discord.Object(id=gid))
-            print(f"✅ Synced {len(cmds)} commands to guild {gid}")
-        except Exception as e:
-            print(f"❌ Failed to sync to guild {gid}: {e}")
+    try:
+        cmds = await tree.sync()
+        print(f"✅ Synced {len(cmds)} global commands")
+    except Exception as e:
+        print(f"❌ Failed to sync global commands: {e}")
     notify_loop.start()
 
 bot.run(TOKEN)
