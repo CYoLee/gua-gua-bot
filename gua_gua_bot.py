@@ -52,7 +52,6 @@ async def add_id(interaction: discord.Interaction, player_ids: str):
             else:
                 ref.set({})
                 success.append(pid)
-
         msg = []
         if success:
             msg.append(f"✅ 已新增 / Added：`{', '.join(success)}`")
@@ -132,7 +131,7 @@ async def add_notify(interaction: discord.Interaction, date: str, time: str, mes
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
-@tree.command(name="list_notify", description="查看提醒列表")
+@tree.command(name="list_notify", description="查看提醒列表 / Check reminder list")
 async def list_notify(interaction: discord.Interaction):
     try:
         docs = db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream()
@@ -144,10 +143,12 @@ async def list_notify(interaction: discord.Interaction):
                 if len(parts) < 3:
                     raise ValueError("Invalid datetime format")
                 dt = datetime.strptime(parts[0], "%Y年%m月%d日")
-                hour_str = parts[1]
-                minute_str = parts[2].split(":")[1]
-                hour = 0 if "AM" in hour_str and "12" in hour_str else int(hour_str.replace("AM", "").replace("PM", "")) + (12 if "PM" in hour_str and "12" not in hour_str else 0)
-                minute = int(minute_str)
+                hour_part = parts[1]
+                minute = int(parts[2].split(":")[1])  # <-- 修正這行
+
+                hour = 0 if "AM" in hour_part and "12" in hour_part else int(hour_part.replace("AM", "").replace("PM", "")) + (
+                    12 if "PM" in hour_part and "12" not in hour_part else 0
+                )
                 dt = dt.replace(hour=hour, minute=minute)
                 time_str = dt.strftime("%Y/%m/%d %H:%M")
             except Exception:
@@ -250,7 +251,7 @@ async def notify_loop():
         channel = bot.get_channel(int(data["channel_id"]))
         if channel:
             try:
-                await channel.send(f'{data.get("mention", "")} ⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}')
+                await channel.send(f'{data.get("mention", "")} \n⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}')
             except Exception as e:
                 print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
