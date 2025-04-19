@@ -107,9 +107,25 @@ def redeem_submit():
         results = []
         for i in range(0, len(player_ids), batch_size):
             batch = player_ids[i:i + batch_size]
-            tasks = [run_redeem(pid, code) for pid in batch]
-            results.extend(await asyncio.gather(*tasks))
+            print(f"[Batch] 開始處理第 {i//batch_size + 1} 批，共 {len(batch)} 人")
 
+            try:
+                # 設定 timeout 為 60 秒，避免卡住
+                batch_results = await asyncio.wait_for(
+                    asyncio.gather(*[run_redeem(pid, code) for pid in batch]),
+                    timeout=60
+                )
+                print(f"[Batch] 第 {i//batch_size + 1} 批完成")
+                print(f"[Batch] 第 {i//batch_size + 1} 批成功 {sum(1 for r in batch_results if r['success'])} 人")
+                results.extend(batch_results)
+            except asyncio.TimeoutError:
+                print(f"[Batch] 第 {i//batch_size + 1} 批執行超時，略過該批")
+                for pid in batch:
+                    results.append({
+                        "player_id": pid,
+                        "success": False,
+                        "reason": "批次執行超時"
+                    })
         # 整理成功與失敗清單
         success_details = []
         fail_details = []
@@ -132,7 +148,6 @@ def redeem_submit():
             "success": success_details,
             "fails": fail_details
         }
-
     # 用 nest_asyncio 兼容 Flask 同步框架
     import nest_asyncio
     nest_asyncio.apply()
