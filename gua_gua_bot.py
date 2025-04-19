@@ -177,7 +177,7 @@ async def add_notify(
                     "channel_id": str(target_channel.id if target_channel else interaction.channel_id),
                     "guild_id": str(interaction.guild_id),
                     "datetime": dt.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
-                    "message": message,
+                    "message": message.replace("\\n", "\n"),
                     "mention": mention
                 })
                 count += 1
