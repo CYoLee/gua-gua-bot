@@ -176,7 +176,7 @@ async def add_notify(
                 db.collection("notifications").add({
                     "channel_id": str(target_channel.id if target_channel else interaction.channel_id),
                     "guild_id": str(interaction.guild_id),
-                    "datetime": dt.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
+                    "datetime": dt,
                     "message": message.replace("\\n", "\n"),
                     "mention": mention
                 })
@@ -193,27 +193,7 @@ async def list_notify(interaction: discord.Interaction):
         for i, doc in enumerate(docs):
             data = doc.to_dict()
             try:
-                # 例：'2025年4月18日 PM5:15:00 [UTC+8]'
-                parts = data["datetime"].split(" ")
-                if len(parts) < 2:
-                    raise ValueError("Invalid datetime format")
-
-                # 日期處理
-                dt = datetime.strptime(parts[0], "%Y年%m月%d日")
-
-                # 時間處理：PM5:15:00
-                time_str = parts[1]  # "PM5:15:00"
-                ampm = "AM" if time_str.startswith("AM") else "PM"
-                time_only = time_str.replace("AM", "").replace("PM", "")
-                hour, minute, *_ = map(int, time_only.split(":"))
-
-                # 轉換成 24 小時制
-                if ampm == "PM" and hour != 12:
-                    hour += 12
-                if ampm == "AM" and hour == 12:
-                    hour = 0
-
-                dt = dt.replace(hour=hour, minute=minute)
+                dt = data["datetime"].astimezone(tz)
                 time_str = dt.strftime("%Y-%m-%d %H:%M")
             except Exception:
                 time_str = "❓ 時間解析錯誤 / Time error"
@@ -284,8 +264,7 @@ async def edit_notify(
 
         # === 原時間解析（不含秒數）===
         try:
-            dt_text = old_data["datetime"].split(" [")[0]  # e.g., '2025年4月18日 PM5:15:00'
-            orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")
+            orig = old_data["datetime"].astimezone(tz)
         except Exception:
             await interaction.followup.send("❌ 原時間格式解析失敗，無法修改", ephemeral=True)
             return
