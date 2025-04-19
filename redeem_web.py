@@ -234,6 +234,37 @@ def list_ids():
 
     return jsonify({"guild_id": guild_id, "players": players, "count": len(players)})
 
+@app.route("/fix_missing_names", methods=["POST"])
+def fix_missing_names():
+    data = request.json
+    guild_id = data.get("guild_id")
+    if not guild_id:
+        return jsonify({"success": False, "reason": "缺少 guild_id"}), 400
+
+    async def fix_names():
+        players_ref = db.collection("ids").document(guild_id).collection("players")
+        docs = list(players_ref.stream())
+        updated = 0
+        for doc in docs:
+            pid = doc.id
+            info = doc.to_dict()
+            nickname = await get_nickname_by_id(pid)
+            if not nickname:
+                continue
+            if "name" not in info or not info["name"]:
+                players_ref.document(pid).update({"name": nickname})
+                updated += 1
+            elif info["name"] != nickname:
+                players_ref.document(pid).update({"name": nickname})
+                updated += 1
+        return updated
+
+    import nest_asyncio
+    nest_asyncio.apply()
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    updated_count = asyncio.run(fix_names())
+    return jsonify({"success": True, "updated": updated_count})
+
 @app.route("/")
 def health():
     return "Worker ready for redeeming!"
