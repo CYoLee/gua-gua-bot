@@ -3,6 +3,7 @@ import json
 import base64
 import pytz
 import discord
+import re
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -36,6 +37,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 # === ID 管理 ===
+import re
+
 @tree.command(name="add_id", description="新增一個或多個玩家 ID / Add one or multiple player IDs")
 @app_commands.describe(player_ids="可以用逗號(,)分隔的玩家 ID / Player IDs separated by comma(,)")
 async def add_id(interaction: discord.Interaction, player_ids: str):
@@ -43,15 +46,31 @@ async def add_id(interaction: discord.Interaction, player_ids: str):
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild_id = str(interaction.guild_id)
         ids = [pid.strip() for pid in player_ids.split(",") if pid.strip()]
+
+        # 驗證每個玩家 ID 是否為 9 位數字
+        valid_ids = []
+        invalid_ids = []
+        for pid in ids:
+            if re.match(r'^\d{9}$', pid):  # 檢查是否為 9 位數字
+                valid_ids.append(pid)
+            else:
+                invalid_ids.append(pid)
+
+        if invalid_ids:
+            msg = f"⚠️ 無效 ID（非 9 位數字）：`{', '.join(invalid_ids)}`"
+            await interaction.followup.send(msg, ephemeral=True)
+            return
+
         success = []
         exists = []
-        for pid in ids:
+        for pid in valid_ids:
             ref = db.collection("ids").document(guild_id).collection("players").document(pid)
             if ref.get().exists:
                 exists.append(pid)
             else:
                 ref.set({})
                 success.append(pid)
+
         msg = []
         if success:
             msg.append(f"✅ 已新增 / Added：`{', '.join(success)}`")
@@ -59,6 +78,7 @@ async def add_id(interaction: discord.Interaction, player_ids: str):
             msg.append(f"⚠️ 已存在 / Already exists：`{', '.join(exists)}`")
         if not msg:
             msg = ["⚠️ 沒有有效的 ID 輸入 / No valid ID input"]
+        
         await interaction.followup.send("\n".join(msg), ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
@@ -94,7 +114,9 @@ async def list_ids(interaction: discord.Interaction):
 @app_commands.describe(code="兌換碼 / Redeem code", player_id="玩家 ID（選填） / Player ID (optional)")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     try:
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        # 開始執行之前告訴用戶正在處理
+        await interaction.response.send_message("🎁 兌換處理中，請稍候...此過程可能需要一些時間，請勿重複提交\n# Redeem is being processed, please wait... This may take some time, please do not submit again.", ephemeral=True)
+        
         guild_id = str(interaction.guild_id)
         payload = {"code": code, "guild_id": guild_id}
         if player_id:
@@ -107,29 +129,29 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                         result = await resp.json()
                         print(f"[Debug] Cloud Run 回傳結果：{result}")  # Debug log
                         if not isinstance(result, dict):
-                            msg = f"⚠️ 非預期格式：{result}"
+                            msg = f"⚠️ 非預期格式：{result}\n# Unexpected format: {result}"
                             await interaction.followup.send(msg, ephemeral=True)
                             return
                     else:
                         text = await resp.text()
-                        await interaction.followup.send(f"⚠️ 非 JSON 回應：{text}", ephemeral=True)
+                        await interaction.followup.send(f"⚠️ 非 JSON 回應：{text}\n# Non-JSON response: {text}", ephemeral=True)
                         return
                 except Exception as e:
-                    await interaction.followup.send(f"❌ 發生錯誤：{str(e)}", ephemeral=True)
+                    await interaction.followup.send(f"❌ 發生錯誤：{str(e)}\n# Error occurred: {str(e)}", ephemeral=True)
                     return
 
         # === 檢查 result 是否為空，若空則顯示錯誤訊息 ===
         if not result.get("success") and not result.get("fails"):
-            await interaction.followup.send("⚠️ 沒有收到任何成功或失敗結果，請確認後端是否正常處理", ephemeral=True)
+            await interaction.followup.send("⚠️ 沒有收到任何成功或失敗結果，請確認後端是否正常處理\n# No success or failure results received, please check if the backend is processing correctly.", ephemeral=True)
             return
 
         # === 格式化訊息 ===
-        msg_lines = [result.get("message", "🎁 兌換結果如下").strip() or "🎁 兌換結果如下"]
+        msg_lines = [result.get("message", "🎁 兌換結果如下\n# Redeem results as follows").strip() or "🎁 兌換結果如下\n# Redeem results as follows"]
 
         # 顯示成功玩家
         success_ids = [item.get("player_id", "未知ID") for item in result.get("success", [])]
         if success_ids:
-            msg_lines.append(f"✅ 成功 ID: {', '.join(success_ids)}")
+            msg_lines.append(f"✅ 成功 ID: {', '.join(success_ids)}\n# Success IDs: {', '.join(success_ids)}")
 
         # 分批顯示失敗玩家，避免字數過長
         fail_ids = [item.get("player_id", "未知ID") for item in result.get("fails", [])]
@@ -137,7 +159,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
             batch_size = 20  # 每批顯示 20 位失敗玩家
             for i in range(0, len(fail_ids), batch_size):
                 batch = fail_ids[i:i + batch_size]
-                fail_msg = f"❌ 失敗 ID: {', '.join(batch)}"
+                fail_msg = f"❌ 失敗 ID: {', '.join(batch)}\n# Failure IDs: {', '.join(batch)}"
                 msg_lines.append(fail_msg)
 
         # 確保每條訊息長度不超過 2000 字符
@@ -145,14 +167,14 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
 
         if len(full_message) > 2000:
             await interaction.followup.send(
-                f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節（請改用少量 ID 或查看伺服器日誌）",
+                f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節（請改用少量 ID 或查看伺服器日誌）\n# Success/Failure list too long, details skipped (please use fewer IDs or check the server logs).",
                 ephemeral=True
             )
         else:
             await interaction.followup.send(full_message, ephemeral=True)
 
     except Exception as e:
-        await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 發生錯誤：{e}\n# Error occurred: {e}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
@@ -336,7 +358,8 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
                 "`/add_notify` - Add reminders (support multiple dates/times)\n"
                 "`/list_notify` - View reminder list\n"
                 "`/remove_notify` - Remove a reminder\n"
-                "`/edit_notify` - Edit a reminder"
+                "`/edit_notify` - Edit a reminder\n"
+                "`/help` - View the list of available commands"
             )
         else:
             content = (
@@ -348,7 +371,8 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
                 "`/add_notify` - 新增提醒（支援多個日期與時間）\n"
                 "`/list_notify` - 查看提醒列表\n"
                 "`/remove_notify` - 移除提醒\n"
-                "`/edit_notify` - 編輯提醒"
+                "`/edit_notify` - 編輯提醒\n"
+                "`/help` - 查看指令列表"
             )
         await interaction.response.send_message(content, ephemeral=True)
     except Exception as e:
