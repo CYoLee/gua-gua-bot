@@ -204,7 +204,7 @@ async def list_notify(interaction: discord.Interaction):
             except Exception:
                 time_str = "❓ 時間解析錯誤 / Time error"
             rows.append(f"{i+1}. {time_str} - {data.get('message')}")
-        await interaction.response.send_message("\n".join(rows) if rows else "📭 沒有提醒資料 / No reminders found", ephemeral=True)
+        await interaction.response.send_message("\n".join(rows) if rows else "📭 沒有提醒資料 / No reminders found")
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
