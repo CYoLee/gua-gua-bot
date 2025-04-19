@@ -79,14 +79,18 @@ def redeem_submit():
 
     async def async_main():
         if player_id:
-            # ✅ 單人模式：有 guild_id 就補進 Firestore
+            # ✅ 單人模式：補進 Firestore（如有 guild_id）
             if guild_id:
                 player_ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
                 if not player_ref.get().exists:
                     player_ref.set({"auto_added": True})
 
             result = await run_redeem(player_id, code)
-            return result
+            return {
+                "message": "兌換完成（單人）",
+                "success": [result] if result.get("success") else [],
+                "fails": [] if result.get("success") else [result]
+            }
 
         if not guild_id:
             return {"success": False, "reason": "多人兌換需提供 guild_id"}
@@ -106,27 +110,28 @@ def redeem_submit():
             tasks = [run_redeem(pid, code) for pid in batch]
             results.extend(await asyncio.gather(*tasks))
 
-        # 統計結果
-        success_count = 0
-        fail_count = 0
+        # 整理成功與失敗清單
+        success_details = []
         fail_details = []
 
         for result in results:
+            pid = result.get("player_id", "未知ID")
             if result.get("success"):
-                success_count += 1
+                success_details.append({
+                    "player_id": pid,
+                    "message": result.get("message", "兌換成功")
+                })
             else:
-                fail_count += 1
-                if len(fail_details) < 10:
-                    fail_details.append({
-                        "player_id": result.get("player_id"),
-                        "reason": result.get("reason", "未知錯誤")
-                    })
+                fail_details.append({
+                    "player_id": pid,
+                    "reason": result.get("reason", "未知錯誤")
+                })
 
         return {
-            "message": f"兌換完成，成功 {success_count} 筆，失敗 {fail_count} 筆",
+            "message": f"兌換完成，成功 {len(success_details)} 筆，失敗 {len(fail_details)} 筆",
+            "success": success_details,
             "fails": fail_details
         }
-
 
     # 用 nest_asyncio 兼容 Flask 同步框架
     import nest_asyncio

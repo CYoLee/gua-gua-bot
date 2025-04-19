@@ -107,15 +107,43 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                         result = await resp.json()
                         if not isinstance(result, dict):
                             msg = f"⚠️ 非預期格式：{result}"
-                        else:
-                            msg = result.get("message") or result.get("reason") or "❓ 未知回應 / Unknown response"
+                            await interaction.followup.send(msg, ephemeral=True)
+                            return
                     else:
                         text = await resp.text()
-                        msg = f"⚠️ 非 JSON 回應：{text}"
+                        await interaction.followup.send(f"⚠️ 非 JSON 回應：{text}", ephemeral=True)
+                        return
                 except Exception as e:
-                    msg = f"❌ 發生錯誤：{str(e)}"
+                    await interaction.followup.send(f"❌ 發生錯誤：{str(e)}", ephemeral=True)
+                    return
 
-                await interaction.followup.send(f"🎁 回應：{msg}", ephemeral=True)
+        # === 格式化訊息 ===
+        msg_lines = [result.get("message", "🎁 兌換結果如下").strip() or "🎁 兌換結果如下"]
+
+        if result.get("success"):
+            msg_lines.append("✅ 成功名單：")
+            for item in result["success"]:
+                pid = item.get("player_id", "未知ID")
+                message = item.get("message", "成功").strip()
+                msg_lines.append(f"➤ {pid}：{message}")
+            msg_lines.append("")
+
+        if result.get("fails"):
+            msg_lines.append("❌ 失敗名單：")
+            for item in result["fails"]:
+                pid = item.get("player_id", "未知ID")
+                reason = item.get("reason", "未知原因").strip()
+                msg_lines.append(f"➤ {pid}：{reason}")
+
+        full_message = "\n".join(msg_lines)
+
+        if len(full_message) > 2000:
+            await interaction.followup.send(
+                f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節（請改用少量 ID 或查看伺服器日誌）",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(full_message, ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
