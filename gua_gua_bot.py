@@ -102,6 +102,9 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
 @tree.command(name="list_ids", description="列出所有玩家 ID / Show all player ID list")
 async def list_ids(interaction: discord.Interaction):
     try:
+        # ✨ 這行是關鍵：防止 timeout
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
         guild_id = str(interaction.guild_id)
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{REDEEM_API_URL}/list_ids?guild_id={guild_id}") as resp:
@@ -109,7 +112,7 @@ async def list_ids(interaction: discord.Interaction):
 
         players = result.get("players", [])
         if not players:
-            await interaction.response.send_message("📭 沒有任何 ID / No player ID found", ephemeral=True)
+            await interaction.followup.send("📭 沒有任何 ID / No player ID found", ephemeral=True)
             return
 
         lines = []
@@ -123,8 +126,9 @@ async def list_ids(interaction: discord.Interaction):
                     lines.append(f"- `{pid}`")
             except Exception as e:
                 lines.append(f"- `{pid}` (⚠️ 無法顯示名稱: {e})")
+
         msg = f"📋 玩家清單 / Player List:\n" + "\n".join(lines)
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.followup.send(msg, ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}\n# Error: {e}", ephemeral=True)
