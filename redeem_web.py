@@ -39,7 +39,7 @@ async def get_nickname_by_id(player_id: str) -> str:
             await page.click(".login_btn")
             await page.wait_for_timeout(2000)
 
-            nickname_locator = page.locator(".nickname")
+            nickname_locator = page.locator(".name")
             if await nickname_locator.count() > 0:
                 return await nickname_locator.inner_text()
             return ""

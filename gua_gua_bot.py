@@ -1,3 +1,4 @@
+# gua_gua_bot.py
 import os
 import json
 import base64
@@ -392,8 +393,8 @@ async def notify_loop():
     future = now + timedelta(seconds=30)
 
     docs = db.collection("notifications") \
-        .where("datetime", ">=", now) \
-        .where("datetime", "<", future) \
+        .where(filter=("datetime", ">=", now)) \
+        .where(filter=("datetime", "<", future)) \
         .stream()
 
     for doc in docs:
