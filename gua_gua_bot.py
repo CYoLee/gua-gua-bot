@@ -186,7 +186,7 @@ async def list_notify(interaction: discord.Interaction):
                     hour = 0
 
                 dt = dt.replace(hour=hour, minute=minute)
-                time_str = dt.strftime("%Y/%m/%d %H:%M")
+                time_str = dt.strftime("%Y-%m-%d %H:%M")
             except Exception:
                 time_str = "❓ 時間解析錯誤 / Time error"
             rows.append(f"{i+1}. {time_str} - {data.get('message')}")
@@ -241,6 +241,7 @@ async def edit_notify(
 ):
     try:
         await interaction.response.defer(thinking=True, ephemeral=True)
+
         docs = list(db.collection("notifications")
                     .where("guild_id", "==", str(interaction.guild_id))
                     .order_by("datetime")
@@ -253,14 +254,15 @@ async def edit_notify(
         doc = docs[real_index]
         old_data = doc.to_dict()
 
-        # 原時間解析
+        # === 原時間解析（不含秒數）===
         try:
-            dt_text = old_data["datetime"].split(" [")[0]  # e.g., 2025年4月18日 PM5:15:00
+            dt_text = old_data["datetime"].split(" [")[0]  # e.g., '2025年4月18日 PM5:15:00'
             orig = datetime.strptime(dt_text, "%Y年%m月%d日 %p%I:%M")
         except Exception:
-            orig = datetime.now(tz)
+            await interaction.followup.send("❌ 原時間格式解析失敗，無法修改", ephemeral=True)
+            return
 
-        # 修改時間
+        # === 修改時間 ===
         if date:
             y, mo, d = map(int, date.split("-"))
             orig = orig.replace(year=y, month=mo, day=d)
@@ -268,16 +270,16 @@ async def edit_notify(
             h, m = map(int, time.split(":"))
             orig = orig.replace(hour=h, minute=m)
 
-        # 套用時區
+        # === 套用時區 ===
         if orig.tzinfo is None:
             orig = tz.localize(orig)
         else:
             orig = orig.astimezone(tz)
 
-        # 刪除舊的
+        # === 刪除舊提醒 ===
         db.collection("notifications").document(doc.id).delete()
 
-        # 建立新的 reminder
+        # === 新提醒資料 ===
         new_data = {
             "channel_id": str(target_channel.id if target_channel else old_data.get("channel_id", interaction.channel_id)),
             "guild_id": str(interaction.guild_id),
@@ -287,9 +289,10 @@ async def edit_notify(
         }
 
         db.collection("notifications").add(new_data)
+
         await interaction.followup.send(f"✏️ 已更新提醒 / Updated reminder #{index}", ephemeral=True)
 
-        # 推送到監控頻道
+        # === 推送到監控頻道 ===
         log_channel = bot.get_channel(1356431597150408786)
         if log_channel:
             await log_channel.send(
