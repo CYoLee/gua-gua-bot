@@ -290,7 +290,7 @@ async def edit_notify(
         new_data = {
             "channel_id": str(target_channel.id if target_channel else old_data.get("channel_id", interaction.channel_id)),
             "guild_id": str(interaction.guild_id),
-            "datetime": orig.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]"),
+            "datetime": orig,
             "message": message if message is not None else old_data.get("message"),
             "mention": mention if mention is not None else old_data.get("mention", "")
         }
