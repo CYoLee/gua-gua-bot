@@ -391,10 +391,9 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
 async def notify_loop():
     now = datetime.now(tz).replace(second=0, microsecond=0)
     future = now + timedelta(seconds=30)
-
     docs = db.collection("notifications") \
-        .where("datetime", ">=", now) \
-        .where("datetime", "<", future) \
+        .where(filter=("datetime", ">=", now)) \
+        .where(filter=("datetime", "<", future)) \
         .stream()
 
     for doc in docs:
