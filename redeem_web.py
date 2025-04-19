@@ -23,7 +23,7 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 FAILURE_KEYWORDS = [
-    "請先輸入", "不存在", "伺服器繁忙", "錯誤", "無效", "超出", "領取", "類型", "已使用"
+    "請先輸入", "不存在", "伺服器繁忙", "錯誤", "無效", "超出", "無法", "類型", "已使用"
 ]
 
 async def run_redeem(player_id, code):
@@ -37,7 +37,7 @@ async def run_redeem(player_id, code):
             await page.fill('input[type="text"]', player_id)
 
             try:
-                await page.wait_for_selector(".login_btn", timeout=15000)
+                await page.wait_for_selector(".login_btn", timeout=30000)
                 await page.click(".login_btn")
             except TimeoutError:
                 return {"player_id": player_id, "success": False, "reason": "登入按鈕未出現"}
@@ -59,8 +59,11 @@ async def run_redeem(player_id, code):
 
             if any(keyword in message for keyword in FAILURE_KEYWORDS):
                 return {"player_id": player_id, "success": False, "reason": message}
-            else:
+
+            if "成功" in message:  # 假設當頁面顯示"成功"時才會算為成功
                 return {"player_id": player_id, "success": True, "message": message}
+            else:
+                return {"player_id": player_id, "success": False, "reason": "未知錯誤"}
     except Exception as e:
         return {"player_id": player_id, "success": False, "reason": f"例外錯誤: {str(e)}"}
     finally:
