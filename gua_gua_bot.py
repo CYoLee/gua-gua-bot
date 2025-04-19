@@ -3,7 +3,7 @@ import json
 import base64
 import pytz
 import discord
-from datetime import datetime
+from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
 from dotenv import load_dotenv
@@ -352,15 +352,22 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
 # === 通知推播 ===
 @tasks.loop(seconds=30)
 async def notify_loop():
-    now = datetime.now(tz)
-    ts_str = now.strftime("%Y年%-m月%-d日 %p%-I:%M:00 [UTC+8]")
-    docs = db.collection("notifications").where("datetime", "==", ts_str).stream()
+    now = datetime.now(tz).replace(second=0, microsecond=0)
+    future = now + timedelta(seconds=30)
+
+    docs = db.collection("notifications") \
+        .where("datetime", ">=", now) \
+        .where("datetime", "<", future) \
+        .stream()
+
     for doc in docs:
         data = doc.to_dict()
         channel = bot.get_channel(int(data["channel_id"]))
         if channel:
             try:
-                await channel.send(f'{data.get("mention", "")} \n⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}')
+                await channel.send(
+                    f'{data.get("mention", "")} \n⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}'
+                )
             except Exception as e:
                 print(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
