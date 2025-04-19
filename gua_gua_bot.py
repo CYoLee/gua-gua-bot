@@ -112,7 +112,17 @@ async def list_ids(interaction: discord.Interaction):
             await interaction.response.send_message("📭 沒有任何 ID / No player ID found", ephemeral=True)
             return
 
-        lines = [f"- `{p['id']}` ({p['name']})" if p.get("name") else f"- `{p['id']}`" for p in players]
+        lines = []
+        for p in players:
+            pid = p.get("id", "未知ID")
+            name = p.get("name", "")
+            try:
+                if name:
+                    lines.append(f"- `{pid}` ({name})")
+                else:
+                    lines.append(f"- `{pid}`")
+            except Exception as e:
+                lines.append(f"- `{pid}` (⚠️ 無法顯示名稱: {e})")
         msg = f"📋 玩家清單 / Player List:\n" + "\n".join(lines)
         await interaction.response.send_message(msg, ephemeral=True)
 
