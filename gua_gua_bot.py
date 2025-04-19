@@ -126,24 +126,23 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         # === 格式化訊息 ===
         msg_lines = [result.get("message", "🎁 兌換結果如下").strip() or "🎁 兌換結果如下"]
 
-        if result.get("success"):
-            msg_lines.append("✅ 成功名單：")
-            for item in result["success"]:
-                pid = item.get("player_id", "未知ID")
-                message = item.get("message", "成功").strip()
-                msg_lines.append(f"➤ {pid}：{message}")
-            msg_lines.append("")
+        # 顯示成功玩家
+        success_ids = [item.get("player_id", "未知ID") for item in result.get("success", [])]
+        if success_ids:
+            msg_lines.append(f"✅ 成功 ID: {', '.join(success_ids)}")
 
-        if result.get("fails"):
-            msg_lines.append("❌ 失敗名單：")
-            for item in result["fails"]:
-                pid = item.get("player_id", "未知ID")
-                reason = item.get("reason", "未知原因").strip()
-                msg_lines.append(f"➤ {pid}：{reason}")
+        # 分批顯示失敗玩家，避免字數過長
+        fail_ids = [item.get("player_id", "未知ID") for item in result.get("fails", [])]
+        if fail_ids:
+            batch_size = 20  # 每批顯示 20 位失敗玩家
+            for i in range(0, len(fail_ids), batch_size):
+                batch = fail_ids[i:i + batch_size]
+                fail_msg = f"❌ 失敗 ID: {', '.join(batch)}"
+                msg_lines.append(fail_msg)
 
+        # 確保每條訊息長度不超過 2000 字符
         full_message = "\n".join(msg_lines)
 
-        # === 檢查訊息長度，超過限制則略過細節 ===
         if len(full_message) > 2000:
             await interaction.followup.send(
                 f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節（請改用少量 ID 或查看伺服器日誌）",
