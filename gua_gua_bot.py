@@ -262,9 +262,10 @@ async def edit_notify(
         doc = docs[real_index]
         old_data = doc.to_dict()
 
-        # === 原時間解析（不含秒數）===
+        # === 原時間解析（修正 Timestamp 為標準 datetime）===
         try:
-            orig = old_data["datetime"].astimezone(tz)
+            firestore_dt = old_data["datetime"]
+            orig = datetime.fromtimestamp(firestore_dt.timestamp(), tz)
         except Exception:
             await interaction.followup.send("❌ 原時間格式解析失敗，無法修改", ephemeral=True)
             return
@@ -277,7 +278,7 @@ async def edit_notify(
             h, m = map(int, time.split(":"))
             orig = orig.replace(hour=h, minute=m)
 
-        # === 套用時區 ===
+        # === 套用時區（保險起見） ===
         if orig.tzinfo is None:
             orig = tz.localize(orig)
         else:
