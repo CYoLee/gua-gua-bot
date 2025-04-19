@@ -393,8 +393,8 @@ async def notify_loop():
     future = now + timedelta(seconds=30)
 
     docs = db.collection("notifications") \
-        .where(filter=("datetime", ">=", now)) \
-        .where(filter=("datetime", "<", future)) \
+        .where("datetime", ">=", now) \
+        .where("datetime", "<", future) \
         .stream()
 
     for doc in docs:
