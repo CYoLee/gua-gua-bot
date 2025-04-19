@@ -114,8 +114,8 @@ async def list_ids(interaction: discord.Interaction):
 @app_commands.describe(code="兌換碼 / Redeem code", player_id="玩家 ID（選填） / Player ID (optional)")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     try:
-        # 開始執行之前告訴用戶正在處理
-        await interaction.response.send_message("🎁 兌換處理中，請稍候...此過程可能需要一些時間，請勿重複提交\n# Redeem is being processed, please wait... This may take some time, please do not submit again.", ephemeral=True)
+        # 等待訊息（保留英文，但不加粗不放大）
+        await interaction.response.send_message("🎁 兌換處理中，請稍候... 此過程可能需要一些時間，請勿重複提交。\n(Redeem is being processed, please wait... This may take some time, please do not submit again.)", ephemeral=True)
         
         guild_id = str(interaction.guild_id)
         payload = {"code": code, "guild_id": guild_id}
@@ -129,52 +129,49 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                         result = await resp.json()
                         print(f"[Debug] Cloud Run 回傳結果：{result}")  # Debug log
                         if not isinstance(result, dict):
-                            msg = f"⚠️ 非預期格式：{result}\n# Unexpected format: {result}"
-                            await interaction.followup.send(msg, ephemeral=True)
+                            await interaction.followup.send(f"⚠️ 非預期格式 / Unexpected format: {result}", ephemeral=True)
                             return
                     else:
                         text = await resp.text()
-                        await interaction.followup.send(f"⚠️ 非 JSON 回應：{text}\n# Non-JSON response: {text}", ephemeral=True)
+                        await interaction.followup.send(f"⚠️ 非 JSON 回應 / Non-JSON response: {text}", ephemeral=True)
                         return
                 except Exception as e:
-                    await interaction.followup.send(f"❌ 發生錯誤：{str(e)}\n# Error occurred: {str(e)}", ephemeral=True)
+                    await interaction.followup.send(f"❌ 發生錯誤 / Error occurred: {str(e)}", ephemeral=True)
                     return
 
-        # === 檢查 result 是否為空，若空則顯示錯誤訊息 ===
+        # 檢查空結果
         if not result.get("success") and not result.get("fails"):
-            await interaction.followup.send("⚠️ 沒有收到任何成功或失敗結果，請確認後端是否正常處理\n# No success or failure results received, please check if the backend is processing correctly.", ephemeral=True)
+            await interaction.followup.send("⚠️ 沒有收到任何成功或失敗結果，請確認後端是否正常處理\n(No success or failure results received, please check if the backend is processing correctly.)", ephemeral=True)
             return
 
-        # === 格式化訊息 ===
-        msg_lines = [result.get("message", "🎁 兌換結果如下\n# Redeem results as follows").strip() or "🎁 兌換結果如下\n# Redeem results as follows"]
+        # === 整理回應訊息 ===
+        msg_lines = [result.get("message", "🎁 兌換結果如下 (Redeem results as follows)").strip()]
 
-        # 顯示成功玩家
+        # 成功 ID
         success_ids = [item.get("player_id", "未知ID") for item in result.get("success", [])]
         if success_ids:
-            msg_lines.append(f"✅ 成功 ID: {', '.join(success_ids)}\n# Success IDs: {', '.join(success_ids)}")
+            msg_lines.append(f"✅ 成功 Success IDs: {', '.join(success_ids)}")
 
-        # 分批顯示失敗玩家，避免字數過長
+        # 失敗 ID
         fail_ids = [item.get("player_id", "未知ID") for item in result.get("fails", [])]
         if fail_ids:
-            batch_size = 20  # 每批顯示 20 位失敗玩家
+            batch_size = 20
             for i in range(0, len(fail_ids), batch_size):
                 batch = fail_ids[i:i + batch_size]
-                fail_msg = f"❌ 失敗 ID: {', '.join(batch)}\n# Failure IDs: {', '.join(batch)}"
-                msg_lines.append(fail_msg)
+                msg_lines.append(f"❌ 失敗 Failure IDs: {', '.join(batch)}")
 
-        # 確保每條訊息長度不超過 2000 字符
         full_message = "\n".join(msg_lines)
 
         if len(full_message) > 2000:
             await interaction.followup.send(
-                f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節（請改用少量 ID 或查看伺服器日誌）\n# Success/Failure list too long, details skipped (please use fewer IDs or check the server logs).",
+                f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節\n(Success/Failure list too long, details skipped.)",
                 ephemeral=True
             )
         else:
             await interaction.followup.send(full_message, ephemeral=True)
 
     except Exception as e:
-        await interaction.followup.send(f"❌ 發生錯誤：{e}\n# Error occurred: {e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 發生錯誤 / Error occurred: {e}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")

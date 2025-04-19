@@ -26,6 +26,27 @@ FAILURE_KEYWORDS = [
     "請先輸入", "不存在", "伺服器繁忙", "錯誤", "無效", "超出", "無法", "類型", "已使用"
 ]
 
+async def get_nickname_by_id(player_id: str) -> str:
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(locale="zh-TW")
+            page = await context.new_page()
+            await page.goto("https://wos-giftcode.centurygame.com/", timeout=60000)
+
+            await page.fill('input[type="text"]', player_id)
+            await page.wait_for_selector(".login_btn", timeout=30000)
+            await page.click(".login_btn")
+            await page.wait_for_timeout(2000)
+
+            nickname_locator = page.locator(".nickname")
+            if await nickname_locator.count() > 0:
+                return await nickname_locator.inner_text()
+            return ""
+    except Exception as e:
+        print(f"[get_nickname_by_id] 取得名稱失敗: {e}")
+        return ""
+
 async def run_redeem(player_id, code):
     browser = None
     try:
@@ -167,8 +188,27 @@ def add_id():
     if not guild_id or not player_id:
         return jsonify({"success": False, "reason": "缺少 guild_id 或 player_id"}), 400
 
-    db.collection("ids").document(guild_id).collection("players").document(player_id).set({"added_by": "api"})
-    return jsonify({"success": True, "message": f"已新增 {player_id} 至 guild {guild_id}"}), 200
+    async def process_add():
+        doc_ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            if "name" not in data or not data["name"]:
+                nickname = await get_nickname_by_id(player_id)
+                doc_ref.update({"name": nickname})
+        else:
+            nickname = await get_nickname_by_id(player_id)
+            doc_ref.set({
+                "player_id": player_id,
+                "name": nickname
+            })
+
+    import nest_asyncio
+    nest_asyncio.apply()
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    asyncio.run(process_add())
+    
+    return jsonify({"success": True, "message": f"已新增或更新 {player_id} 至 guild {guild_id}"}), 200
 
 @app.route("/remove_id", methods=["POST"])
 def remove_id():
@@ -190,9 +230,9 @@ def list_ids():
 
     players_ref = db.collection("ids").document(guild_id).collection("players")
     docs = players_ref.stream()
-    player_ids = [doc.id for doc in docs]
+    players = [{"id": doc.id, "name": doc.to_dict().get("name", "")} for doc in docs]
 
-    return jsonify({"guild_id": guild_id, "player_ids": player_ids, "count": len(player_ids)})
+    return jsonify({"guild_id": guild_id, "players": players, "count": len(players)})
 
 @app.route("/")
 def health():
