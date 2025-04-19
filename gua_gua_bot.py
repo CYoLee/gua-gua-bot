@@ -105,6 +105,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                 try:
                     if resp.headers.get("Content-Type", "").startswith("application/json"):
                         result = await resp.json()
+                        print(f"[Debug] Cloud Run 回傳結果：{result}")  # Debug log
                         if not isinstance(result, dict):
                             msg = f"⚠️ 非預期格式：{result}"
                             await interaction.followup.send(msg, ephemeral=True)
@@ -116,6 +117,11 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                 except Exception as e:
                     await interaction.followup.send(f"❌ 發生錯誤：{str(e)}", ephemeral=True)
                     return
+
+        # === 檢查 result 是否為空，若空則顯示錯誤訊息 ===
+        if not result.get("success") and not result.get("fails"):
+            await interaction.followup.send("⚠️ 沒有收到任何成功或失敗結果，請確認後端是否正常處理", ephemeral=True)
+            return
 
         # === 格式化訊息 ===
         msg_lines = [result.get("message", "🎁 兌換結果如下").strip() or "🎁 兌換結果如下"]
@@ -137,6 +143,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
 
         full_message = "\n".join(msg_lines)
 
+        # === 檢查訊息長度，超過限制則略過細節 ===
         if len(full_message) > 2000:
             await interaction.followup.send(
                 f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節（請改用少量 ID 或查看伺服器日誌）",
@@ -307,8 +314,8 @@ async def edit_notify(
                 f"📝 **提醒被編輯**\n"
                 f"👤 操作者：{interaction.user} ({interaction.user.id})\n"
                 f"🌐 伺服器：{interaction.guild.name} ({interaction.guild.id})\n"
-                f"📌 原提醒：{old_data['datetime']} - {old_data['message']}\n"
-                f"🆕 新提醒：{new_data['datetime']} - {new_data['message']}"
+                f"📌 原提醒：{old_data['datetime'].astimezone(tz).strftime('%Y-%m-%d %H:%M')} - {old_data['message']}\n"
+                f"🆕 新提醒：{new_data['datetime'].astimezone(tz).strftime('%Y-%m-%d %H:%M')} - {new_data['message']}"
             )
 
     except Exception as e:
