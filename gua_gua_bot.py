@@ -5,6 +5,7 @@ import base64
 import pytz
 import discord
 import re
+from discord.ui import View, Button
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -99,12 +100,9 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
-@tree.command(name="list_ids", description="列出所有玩家 ID / Show all player ID list")
+@tree.command(name="list_ids", description="列出所有玩家 ID（支援分頁）")
 async def list_ids(interaction: discord.Interaction):
     try:
-        # ✨ 這行是關鍵：防止 timeout
-        await interaction.response.defer(thinking=True, ephemeral=True)
-
         guild_id = str(interaction.guild_id)
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{REDEEM_API_URL}/list_ids?guild_id={guild_id}") as resp:
@@ -112,26 +110,55 @@ async def list_ids(interaction: discord.Interaction):
 
         players = result.get("players", [])
         if not players:
-            await interaction.followup.send("📭 沒有任何 ID / No player ID found", ephemeral=True)
+            await interaction.response.send_message("📭 沒有任何 ID / No player ID found", ephemeral=True)
             return
 
-        lines = []
-        for p in players:
-            pid = p.get("id", "未知ID")
-            name = p.get("name", "")
-            try:
-                if name:
-                    lines.append(f"- `{pid}` ({name})")
-                else:
-                    lines.append(f"- `{pid}`")
-            except Exception as e:
-                lines.append(f"- `{pid}` (⚠️ 無法顯示名稱: {e})")
+        PAGE_SIZE = 20
+        total_pages = (len(players) + PAGE_SIZE - 1) // PAGE_SIZE
 
-        msg = f"📋 玩家清單 / Player List:\n" + "\n".join(lines)
-        await interaction.followup.send(msg, ephemeral=True)
+        def format_page(page):
+            start = (page - 1) * PAGE_SIZE
+            end = start + PAGE_SIZE
+            page_players = players[start:end]
+            lines = [
+                f"- `{p.get('id', '未知ID')}` ({p.get('name')})" if p.get("name") else f"- `{p.get('id', '未知ID')}`"
+                for p in page_players
+            ]
+            return f"📋 玩家清單（第 {page}/{total_pages} 頁）\n" + "\n".join(lines)
+
+        class PageView(View):
+            def __init__(self):
+                super().__init__(timeout=60)
+                self.page = 1
+                self.message = None
+                self.update_buttons()
+
+            async def update_message(self, interaction):
+                content = format_page(self.page)
+                await interaction.response.edit_message(content=content, view=self)
+
+            def update_buttons(self):
+                self.clear_items()
+                self.add_item(Button(label="⬅️ 上一頁", style=discord.ButtonStyle.gray, disabled=self.page == 1, custom_id="prev"))
+                self.add_item(Button(label="➡️ 下一頁", style=discord.ButtonStyle.gray, disabled=self.page == total_pages, custom_id="next"))
+
+            @discord.ui.button(label="⬅️ 上一頁", style=discord.ButtonStyle.gray, custom_id="prev")
+            async def prev_button(self, interaction: discord.Interaction, button: Button):
+                self.page -= 1
+                self.update_buttons()
+                await self.update_message(interaction)
+
+            @discord.ui.button(label="➡️ 下一頁", style=discord.ButtonStyle.gray, custom_id="next")
+            async def next_button(self, interaction: discord.Interaction, button: Button):
+                self.page += 1
+                self.update_buttons()
+                await self.update_message(interaction)
+
+        view = PageView()
+        await interaction.response.send_message(content=format_page(1), view=view, ephemeral=True)
 
     except Exception as e:
-        await interaction.followup.send(f"❌ 錯誤：{e}\n# Error: {e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 # === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
