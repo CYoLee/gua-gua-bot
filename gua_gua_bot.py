@@ -130,28 +130,28 @@ async def list_ids(interaction: discord.Interaction):
             def __init__(self):
                 super().__init__(timeout=60)
                 self.page = 1
-                self.message = None
-                self.update_buttons()
+
+            def update_buttons(self):
+                for item in self.children:
+                    if isinstance(item, Button):
+                        if item.label == "⬅️ 上一頁":
+                            item.disabled = self.page == 1
+                        elif item.label == "➡️ 下一頁":
+                            item.disabled = self.page >= total_pages
 
             async def update_message(self, interaction):
+                self.update_buttons()
                 content = format_page(self.page)
                 await interaction.response.edit_message(content=content, view=self)
 
-            def update_buttons(self):
-                self.clear_items()
-                self.add_item(Button(label="⬅️ 上一頁", style=discord.ButtonStyle.gray, disabled=self.page == 1, custom_id="prev"))
-                self.add_item(Button(label="➡️ 下一頁", style=discord.ButtonStyle.gray, disabled=self.page == total_pages, custom_id="next"))
-
-            @discord.ui.button(label="⬅️ 上一頁", style=discord.ButtonStyle.gray, custom_id="prev")
+            @discord.ui.button(label="⬅️ 上一頁", style=discord.ButtonStyle.gray)
             async def prev_button(self, interaction: discord.Interaction, button: Button):
                 self.page -= 1
-                self.update_buttons()
                 await self.update_message(interaction)
 
-            @discord.ui.button(label="➡️ 下一頁", style=discord.ButtonStyle.gray, custom_id="next")
+            @discord.ui.button(label="➡️ 下一頁", style=discord.ButtonStyle.gray)
             async def next_button(self, interaction: discord.Interaction, button: Button):
                 self.page += 1
-                self.update_buttons()
                 await self.update_message(interaction)
 
         view = PageView()
