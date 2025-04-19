@@ -102,12 +102,21 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
 async def list_ids(interaction: discord.Interaction):
     try:
         guild_id = str(interaction.guild_id)
-        docs = db.collection("ids").document(guild_id).collection("players").stream()
-        ids = [doc.id for doc in docs]
-        msg = "📋 玩家 ID / Player IDs：\n- " + "\n- ".join(ids) if ids else "📭 沒有任何 ID / No ID found"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{REDEEM_API_URL}/list_ids?guild_id={guild_id}") as resp:
+                result = await resp.json()
+
+        players = result.get("players", [])
+        if not players:
+            await interaction.response.send_message("📭 沒有任何 ID / No player ID found", ephemeral=True)
+            return
+
+        lines = [f"- `{p['id']}` ({p['name']})" if p.get("name") else f"- `{p['id']}`" for p in players]
+        msg = f"📋 玩家清單 / Player List:\n" + "\n".join(lines)
         await interaction.response.send_message(msg, ephemeral=True)
+
     except Exception as e:
-        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}\n# Error: {e}", ephemeral=True)
 
 # === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
