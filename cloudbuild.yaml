@@ -1,0 +1,6 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      ["build", "-t", "gcr.io/gothic-depth-456114-c3/gua-gua-bot-worker", "."]
+images:
+  - "gcr.io/gothic-depth-456114-c3/gua-gua-bot-worker"
