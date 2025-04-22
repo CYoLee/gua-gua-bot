@@ -555,25 +555,29 @@ async def on_message(message):
 @app_commands.describe(target_lang="目標語言（預設中翻英、英翻中）/ Target language (default auto)")
 async def translate_command(interaction: discord.Interaction, target_lang: str = None):
     try:
-        # 加入這段判斷是否有回覆訊息
-        if not interaction.message or not interaction.message.reference:
-            await interaction.response.send_message("⚠️ 請於文字頻道中使用 /translate 並回覆一則訊息", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+
+        # 嘗試找到使用者是回覆哪一則訊息
+        history = interaction.channel.history(limit=5)
+        replied_message = None
+        async for msg in history:
+            if msg.reference and msg.reference.message_id:
+                replied_message = await interaction.channel.fetch_message(msg.reference.message_id)
+                break
+
+        if not replied_message:
+            await interaction.followup.send("⚠️ 請在回覆一則訊息後使用 `/translate` 指令", ephemeral=True)
             return
 
-        ref = interaction.message.reference
-        if not ref or not ref.message_id:
-            await interaction.response.send_message("⚠️ 請回覆一則訊息後使用 /translate\nPlease reply to a message to translate.", ephemeral=True)
-            return
-
-        replied_msg = await interaction.channel.fetch_message(ref.message_id)
-        text = replied_msg.content.strip()
+        text = replied_message.content.strip()
         if not text:
-            await interaction.response.send_message("⚠️ 原文為空 / The original message is empty.", ephemeral=True)
+            await interaction.followup.send("⚠️ 原文為空 / The original message is empty.", ephemeral=True)
             return
 
         detected = translator.detect(text).lang.lower()
         if not target_lang:
-            target_lang = "en" if any(detected.startswith(z) for z in ["zh", "zh-tw", "zh-cn"]) else "zh-tw"
+            target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
+
         result = translator.translate(text, dest=target_lang)
 
         embed = discord.Embed(
@@ -584,9 +588,9 @@ async def translate_command(interaction: discord.Interaction, target_lang: str =
         embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
         embed.set_footer(text=f"語言偵測：{detected} → {target_lang}")
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     except Exception as e:
-        await interaction.response.send_message(f"⚠️ 翻譯失敗：{e}", ephemeral=True)
+        await interaction.followup.send(f"⚠️ 翻譯失敗：{e}", ephemeral=True)
 
 bot.run(TOKEN)
