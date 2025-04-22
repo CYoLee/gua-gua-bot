@@ -520,8 +520,7 @@ async def on_message(message):
                 return
 
             # 簡單判斷：如果包含中文字就翻成英文，否則翻成繁體中文
-            target_lang = "EN" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "ZH"
-
+            target_lang = "EN-US" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "ZH"
             result = translator.translate_text(text, target_lang=target_lang)
 
             embed = discord.Embed(
