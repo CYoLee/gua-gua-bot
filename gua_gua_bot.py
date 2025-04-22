@@ -447,7 +447,8 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
                 "`/list_notify` - View reminder list\n"
                 "`/remove_notify` - Remove a reminder\n"
                 "`/edit_notify` - Edit a reminder\n"
-                "`/help` - View the list of available commands"
+                "`/help` - View the list of available commands\n"
+                "`/translate` - Reply to a message to translate between Chinese and English"
             )
         else:
             content = (
@@ -460,7 +461,8 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
                 "`/list_notify` - 查看提醒列表\n"
                 "`/remove_notify` - 移除提醒\n"
                 "`/edit_notify` - 編輯提醒\n"
-                "`/help` - 查看指令列表"
+                "`/help` - 查看指令列表\n"
+                "`/translate` - 回覆訊息後使用，可翻譯中英文"
             )
         await interaction.response.send_message(content, ephemeral=True)
     except Exception as e:
@@ -523,7 +525,7 @@ async def on_message(message):
 
                 # 嘗試語言偵測，失敗則預設英文
                 try:
-                    detected = translator.detect(text).lang
+                    detected = translator.detect(text).lang.lower()
                 except Exception:
                     detected = "en"
 
@@ -553,25 +555,25 @@ async def on_message(message):
 @app_commands.describe(target_lang="目標語言（預設中翻英、英翻中）/ Target language (default auto)")
 async def translate_command(interaction: discord.Interaction, target_lang: str = None):
     try:
-        # 確認是否回覆訊息（只能從 reply 使用）
+        # 加入這段判斷是否有回覆訊息
         if not interaction.message or not interaction.message.reference:
+            await interaction.response.send_message("⚠️ 請於文字頻道中使用 /translate 並回覆一則訊息", ephemeral=True)
+            return
+
+        ref = interaction.message.reference
+        if not ref or not ref.message_id:
             await interaction.response.send_message("⚠️ 請回覆一則訊息後使用 /translate\nPlease reply to a message to translate.", ephemeral=True)
             return
 
-        replied_msg = await interaction.channel.fetch_message(interaction.message.reference.message_id)
+        replied_msg = await interaction.channel.fetch_message(ref.message_id)
         text = replied_msg.content.strip()
         if not text:
             await interaction.response.send_message("⚠️ 原文為空 / The original message is empty.", ephemeral=True)
             return
 
-        try:
-            detected = translator.detect(text).lang
-        except Exception:
-            detected = "en"
-
+        detected = translator.detect(text).lang.lower()
         if not target_lang:
-            target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
-
+            target_lang = "en" if any(detected.startswith(z) for z in ["zh", "zh-tw", "zh-cn"]) else "zh-tw"
         result = translator.translate(text, dest=target_lang)
 
         embed = discord.Embed(
