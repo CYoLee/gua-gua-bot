@@ -1,18 +1,19 @@
 # gua_gua_bot.py
 import os
-import json
-import base64
-import pytz
-import discord
 import re
-from discord.ui import View, Button
-from datetime import datetime, timedelta
-from discord.ext import commands, tasks
-from discord import app_commands
-from dotenv import load_dotenv
-import firebase_admin
-from firebase_admin import credentials, firestore
+import json
+import pytz
+import base64
+import discord
 import aiohttp
+import firebase_admin
+from dotenv import load_dotenv
+from discord import app_commands
+from googletrans import Translator
+from discord.ui import View, Button
+from discord.ext import commands, tasks
+from datetime import datetime, timedelta
+from firebase_admin import credentials, firestore
 
 # === ENV ===
 load_dotenv()
@@ -39,12 +40,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 # === ID 管理 ===
-import re
-
 @tree.command(name="add_id", description="新增一個或多個玩家 ID / Add one or multiple player IDs")
 @app_commands.describe(player_ids="可以用逗號(,)分隔的玩家 ID / Player IDs separated by comma(,)")
 async def add_id(interaction: discord.Interaction, player_ids: str):
     try:
+        error_ids = []  # 確保初始化，避免未定義
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild_id = str(interaction.guild_id)
         ids = [pid.strip() for pid in player_ids.split(",") if pid.strip()]
@@ -124,9 +124,10 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
-@tree.command(name="list_ids", description="列出所有玩家 ID（支援分頁）")
+@tree.command(name="list_ids", description="列出所有玩家 ID / List all player IDs")
 async def list_ids(interaction: discord.Interaction):
     try:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         guild_id = str(interaction.guild_id)
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{REDEEM_API_URL}/list_ids?guild_id={guild_id}") as resp:
@@ -189,7 +190,13 @@ async def list_ids(interaction: discord.Interaction):
 @app_commands.describe(code="兌換碼 / Redeem code", player_id="玩家 ID（選填） / Player ID (optional)")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     try:
-        # 等待訊息（保留英文，但不加粗不放大）
+        if not code.strip():
+            await interaction.response.send_message("❌ 請提供有效的兌換碼 / Code is required", ephemeral=True)
+            return
+
+        if player_id and not player_id.strip().isdigit():
+            await interaction.response.send_message("❌ 玩家 ID 格式錯誤 / Invalid player ID", ephemeral=True)
+            return
         await interaction.response.send_message("🎁 兌換處理中，請稍候... 此過程可能需要一些時間，請勿重複提交。\n(Redeem is being processed, please wait... This may take some time, please do not submit again.)", ephemeral=True)
         
         guild_id = str(interaction.guild_id)
@@ -208,7 +215,13 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                             return
                     else:
                         text = await resp.text()
-                        await interaction.followup.send(f"⚠️ 非 JSON 回應 / Non-JSON response: {text}", ephemeral=True)
+                        if "502" in text or "Server Error" in text:
+                            await interaction.followup.send(
+                                "⚠️ 系統目前可能正在啟動或忙碌中，請稍後再試一次。\n(System may be initializing or under load. Please try again shortly.)",
+                                ephemeral=True
+                            )
+                        else:
+                            await interaction.followup.send(f"⚠️ 非預期回應內容：\n{text[:500]}", ephemeral=True)
                         return
                 except Exception as e:
                     await interaction.followup.send(f"❌ 發生錯誤 / Error occurred: {str(e)}", ephemeral=True)
@@ -228,12 +241,10 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
             msg_lines.append(f"✅ 成功 Success IDs: {', '.join(success_ids)}")
 
         # 失敗 ID
-        fail_ids = [item.get("player_id", "未知ID") for item in result.get("fails", [])]
-        if fail_ids:
-            batch_size = 20
-            for i in range(0, len(fail_ids), batch_size):
-                batch = fail_ids[i:i + batch_size]
-                msg_lines.append(f"❌ 失敗 Failure IDs: {', '.join(batch)}")
+        fail_items = result.get("fails", [])
+        if fail_items:
+            for f in fail_items:
+                msg_lines.append(f"❌ 失敗 Failure: {f.get('player_id')} - {f.get('reason')}")
 
         full_message = "\n".join(msg_lines)
 
@@ -251,8 +262,8 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
 @app_commands.describe(
-    date="YYYY-MM-DD, multiple allowed",
-    time="HH:MM, multiple allowed",
+    date="YYYY-MM-DD, 可輸入多個 / Multiple allowed",
+    time="HH:MM, 可輸入多個 / Multiple allowed",
     message="提醒訊息 / Reminder message",
     mention="標記對象（可空） / Mention target (optional)",
     target_channel="提醒要送出的頻道（可選）"
@@ -285,7 +296,7 @@ async def add_notify(
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
-@tree.command(name="list_notify", description="查看提醒列表 / Check reminder list")
+@tree.command(name="list_notify", description="查看提醒列表 / View reminder list")
 async def list_notify(interaction: discord.Interaction):
     try:
         docs = db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream()
@@ -308,7 +319,7 @@ async def list_notify(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="remove_notify", description="移除提醒 / Remove reminder")
-@app_commands.describe(index="提醒編號（從1開始）")
+@app_commands.describe(index="提醒編號 / Reminder index")
 async def remove_notify(interaction: discord.Interaction, index: int):
     try:
         docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
@@ -336,12 +347,12 @@ async def remove_notify(interaction: discord.Interaction, index: int):
 
 @tree.command(name="edit_notify", description="編輯提醒 / Edit reminder")
 @app_commands.describe(
-    index="提醒編號（從1開始）",
-    date="新日期 YYYY-MM-DD",
-    time="新時間 HH:MM",
-    message="新訊息",
-    mention="新標記",
-    target_channel="提醒要送出的頻道（可選）"
+    index="提醒編號 / Reminder index",
+    date="新日期 YYYY-MM-DD / New date",
+    time="新時間 HH:MM / New time",
+    message="新訊息 / New message",
+    mention="新標記 / New mention",
+    target_channel="提醒要送出的頻道 / Target channel to send the reminder"
 )
 async def edit_notify(
     interaction: discord.Interaction,
@@ -421,7 +432,7 @@ async def edit_notify(
 
 # === Help 指令 ===
 @tree.command(name="help", description="查看機器人指令說明 / View command help")
-@app_commands.describe(lang="選擇語言 / Choose language")
+@app_commands.describe(lang="選擇語言 / Please choose a language")
 @app_commands.choices(lang=LANG_CHOICES)
 async def help_command(interaction: discord.Interaction, lang: app_commands.Choice[str]):
     try:
@@ -490,5 +501,90 @@ async def on_ready():
         print(f"❌ Failed to sync commands: {e}")
     if not notify_loop.is_running():
         notify_loop.start()
+
+translator = Translator()
+
+@bot.event
+async def on_message(message):
+    # 忽略機器人自己的訊息
+    if message.author.bot:
+        return
+
+    # 當 BOT 被提及並且是回覆某則訊息
+    if bot.user in message.mentions and message.reference:
+        try:
+            original_msg = await message.channel.fetch_message(message.reference.message_id)
+            if original_msg:
+                text = original_msg.content
+
+                # 忽略空訊息
+                if not text.strip():
+                    return
+
+                # 嘗試語言偵測，失敗則預設英文
+                try:
+                    detected = translator.detect(text).lang
+                except Exception:
+                    detected = "en"
+
+                # 決定目標語言
+                target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
+
+                # 翻譯內容
+                result = translator.translate(text, dest=target_lang)
+
+                # 建立回應 Embed
+                embed = discord.Embed(
+                    title="🈶 翻譯完成！Translation Result",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
+                embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
+                embed.set_footer(text=f"語言判定：{detected} → {target_lang}")
+
+                await message.reply(embed=embed)
+        except Exception as e:
+            await message.reply(f"⚠️ 翻譯失敗：{e}")
+
+    # 讓其他 slash 指令繼續能運作
+    await bot.process_commands(message)
+
+@tree.command(name="translate", description="翻譯回覆的訊息 / Translate a replied message")
+@app_commands.describe(target_lang="目標語言（預設中翻英、英翻中）/ Target language (default auto)")
+async def translate_command(interaction: discord.Interaction, target_lang: str = None):
+    try:
+        # 確認是否回覆訊息（只能從 reply 使用）
+        if not interaction.message or not interaction.message.reference:
+            await interaction.response.send_message("⚠️ 請回覆一則訊息後使用 /translate\nPlease reply to a message to translate.", ephemeral=True)
+            return
+
+        replied_msg = await interaction.channel.fetch_message(interaction.message.reference.message_id)
+        text = replied_msg.content.strip()
+        if not text:
+            await interaction.response.send_message("⚠️ 原文為空 / The original message is empty.", ephemeral=True)
+            return
+
+        try:
+            detected = translator.detect(text).lang
+        except Exception:
+            detected = "en"
+
+        if not target_lang:
+            target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
+
+        result = translator.translate(text, dest=target_lang)
+
+        embed = discord.Embed(
+            title="🌐 翻譯完成 / Translation Result",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
+        embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
+        embed.set_footer(text=f"語言偵測：{detected} → {target_lang}")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        await interaction.response.send_message(f"⚠️ 翻譯失敗：{e}", ephemeral=True)
 
 bot.run(TOKEN)

@@ -23,8 +23,8 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 FAILURE_KEYWORDS = [
-    "請先輸入", "不存在", "伺服器繁忙", "錯誤", "無效", "超出", "無法", "類型", "已使用"
-]
+    "請先輸入", "不存在", "伺服器繁忙", "錯誤", "無效", "超出", "無法", "類型", "已使用"]
+RETRY_KEYWORDS = ["伺服器繁忙", "請稍後再試", "系統異常", "請重試", "處理中"]
 
 async def get_nickname_by_id(player_id: str) -> str:
     try:
@@ -47,7 +47,20 @@ async def get_nickname_by_id(player_id: str) -> str:
         print(f"[get_nickname_by_id] 取得名稱失敗: {e}")
         return ""
 
-async def run_redeem(player_id, code):
+async def run_redeem_with_retry(player_id, code, max_retries=2):
+    for attempt in range(max_retries + 1):
+        result = await _redeem_once(player_id, code)
+        reason = result.get("reason", "")
+        if result.get("success"):
+            return result
+        if not any(keyword in reason for keyword in RETRY_KEYWORDS):
+            return result
+        if attempt < max_retries:
+            print(f"[Retry] 嘗試重試 {player_id} 第 {attempt + 1} 次：{reason}")
+            await asyncio.sleep(2 + attempt)
+    return result
+
+async def _redeem_once(player_id, code):
     browser = None
     try:
         async with async_playwright() as p:
@@ -106,10 +119,20 @@ def redeem_submit():
             # ✅ 單人模式：補進 Firestore（如有 guild_id）
             if guild_id:
                 player_ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
-                if not player_ref.get().exists:
-                    player_ref.set({"auto_added": True})
+                doc = player_ref.get()
+                if not doc.exists:
+                    nickname = await get_nickname_by_id(player_id)
+                    player_ref.set({
+                        "auto_added": True,
+                        "name": nickname
+                    })
+                else:
+                    data = doc.to_dict()
+                    if "name" not in data or not data["name"]:
+                        nickname = await get_nickname_by_id(player_id)
+                        player_ref.update({"name": nickname})
 
-            result = await run_redeem(player_id, code)
+            result = await run_redeem_with_retry(player_id, code)
             return {
                 "message": "兌換完成（單人）",
                 "success": [result] if result.get("success") else [],
@@ -136,7 +159,7 @@ def redeem_submit():
             try:
                 # 設定 timeout 為 60 秒，避免卡住
                 batch_results = await asyncio.wait_for(
-                    asyncio.gather(*[run_redeem(pid, code) for pid in batch]),
+                    asyncio.gather(*[run_redeem_with_retry(pid, code) for pid in batch]),
                     timeout=60
                 )
                 print(f"[Batch] 第 {i//batch_size + 1} 批完成")
