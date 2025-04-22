@@ -448,7 +448,7 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
                 "`/remove_notify` - Remove a reminder\n"
                 "`/edit_notify` - Edit a reminder\n"
                 "`/help` - View the list of available commands\n"
-                "`/translate` - Reply to a message to translate between Chinese and English"
+                "`Translation` - Mention the bot and reply to a message to auto-translate between Chinese and English, or use the 'Translate Message' context menu"
             )
         else:
             content = (
@@ -462,7 +462,7 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
                 "`/remove_notify` - 移除提醒\n"
                 "`/edit_notify` - 編輯提醒\n"
                 "`/help` - 查看指令列表\n"
-                "`/translate` - 回覆訊息後使用，可翻譯中英文"
+                "`翻譯功能` - 標記機器人並回覆訊息即可自動翻譯中英文，或使用右鍵訊息選單『翻譯此訊息』"
             )
         await interaction.response.send_message(content, ephemeral=True)
     except Exception as e:
@@ -497,8 +497,8 @@ async def notify_loop():
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     try:
-        cmds = await tree.sync()
-        print(f"✅ Synced {len(cmds)} global commands")
+        synced = await tree.sync()
+        print(f"✅ Synced {len(synced)} global commands")
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
     if not notify_loop.is_running():
@@ -550,34 +550,18 @@ async def on_message(message):
 
     # 讓其他 slash 指令繼續能運作
     await bot.process_commands(message)
-
-@tree.command(name="translate", description="翻譯回覆的訊息 / Translate a replied message")
-@app_commands.describe(target_lang="目標語言（預設中翻英、英翻中）/ Target language (default auto)")
-async def translate_command(interaction: discord.Interaction, target_lang: str = None):
+@tree.context_menu(name="翻譯此訊息 / Translate Message")
+async def context_translate(interaction: discord.Interaction, message: discord.Message):
     try:
         await interaction.response.defer(ephemeral=True)
 
-        # 嘗試找到使用者是回覆哪一則訊息
-        history = interaction.channel.history(limit=5)
-        replied_message = None
-        async for msg in history:
-            if msg.reference and msg.reference.message_id:
-                replied_message = await interaction.channel.fetch_message(msg.reference.message_id)
-                break
-
-        if not replied_message:
-            await interaction.followup.send("⚠️ 請在回覆一則訊息後使用 `/translate` 指令", ephemeral=True)
-            return
-
-        text = replied_message.content.strip()
+        text = message.content.strip()
         if not text:
             await interaction.followup.send("⚠️ 原文為空 / The original message is empty.", ephemeral=True)
             return
 
         detected = translator.detect(text).lang.lower()
-        if not target_lang:
-            target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
-
+        target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
         result = translator.translate(text, dest=target_lang)
 
         embed = discord.Embed(
