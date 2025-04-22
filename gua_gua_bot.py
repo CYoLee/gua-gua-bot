@@ -540,12 +540,11 @@ async def on_message(message):
                 embeds.append(embed)
 
             for embed in embeds:
-                await message.reply(embed=embed, ephemeral=True)
+                await message.reply(embed=embed)  # ❌ 不能加 ephemeral=True
         except Exception as e:
-            await message.reply(f"⚠️ 翻譯失敗：{e}", ephemeral=True)
+            await message.reply(f"⚠️ 翻譯失敗：{e}")  # 同樣不能加 ephemeral=True
 
     await bot.process_commands(message)
-
 
 @tree.context_menu(name="翻譯此訊息 / Translate Message")
 async def context_translate(interaction: discord.Interaction, message: discord.Message):
