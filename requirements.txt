@@ -14,3 +14,4 @@ python-dotenv
 pytz
 nest_asyncio
 googletrans==4.0.0-rc1
+deepl
