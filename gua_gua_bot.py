@@ -3,13 +3,14 @@ import os
 import re
 import json
 import pytz
-import deepl
+#import deepl
 import base64
 import discord
 import aiohttp
 import firebase_admin
 from dotenv import load_dotenv
 from discord import app_commands
+from googletrans import Translator
 from discord.ui import View, Button
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta
@@ -504,8 +505,7 @@ async def on_ready():
     if not notify_loop.is_running():
         notify_loop.start()
 
-DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
-translator = deepl.Translator(DEEPL_API_KEY)
+translator = Translator()
 
 @bot.event
 async def on_message(message):
@@ -519,19 +519,28 @@ async def on_message(message):
             if not text:
                 return
 
-            # 簡單判斷：如果包含中文字就翻成英文，否則翻成繁體中文
-            target_lang = "EN-US" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "ZH"
-            result = translator.translate_text(text, target_lang=target_lang)
+            # 語言判斷
+            if re.search(r"[\u0E00-\u0E7F]", text):  # 泰文
+                target_langs = [("EN", "English"), ("ZH-TW", "繁體中文")]
+            elif any('\u4e00' <= ch <= '\u9fff' for ch in text):  # 中文
+                target_langs = [("EN-US", "English")]
+            else:
+                target_langs = [("ZH-TW", "繁體中文")]
 
-            embed = discord.Embed(
-                title="🈶 翻譯完成！Translation Result",
-                color=discord.Color.blue()
-            )
-            embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
-            embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
-            embed.set_footer(text=f"目標語言 / Target: {target_lang}")
+            embeds = []
+            for lang_code, lang_label in target_langs:
+                result = translator.translate_text(text, target_lang=lang_code)
+                embed = discord.Embed(
+                    title=f"🌐 翻譯完成 / Translation Result ({lang_label})",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
+                embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
+                embed.set_footer(text=f"目標語言 / Target: {lang_label}")
+                embeds.append(embed)
 
-            await message.reply(embed=embed, ephemeral=True)
+            for embed in embeds:
+                await message.reply(embed=embed, ephemeral=True)
         except Exception as e:
             await message.reply(f"⚠️ 翻譯失敗：{e}", ephemeral=True)
 
@@ -547,7 +556,7 @@ async def context_translate(interaction: discord.Interaction, message: discord.M
             await interaction.followup.send("⚠️ 原文為空 / The original message is empty.", ephemeral=True)
             return
 
-        target_lang = "EN" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "ZH"
+        target_lang = "en" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "zh-tw"
         result = translator.translate_text(text, target_lang=target_lang)
 
         embed = discord.Embed(
