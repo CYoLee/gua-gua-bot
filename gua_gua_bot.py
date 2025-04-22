@@ -521,15 +521,15 @@ async def on_message(message):
 
             # 語言判斷
             if re.search(r"[\u0E00-\u0E7F]", text):  # 泰文
-                target_langs = [("EN", "English"), ("ZH-TW", "繁體中文")]
+                target_langs = [("en", "English"), ("zh-tw", "繁體中文")]
             elif any('\u4e00' <= ch <= '\u9fff' for ch in text):  # 中文
-                target_langs = [("EN-US", "English")]
+                target_langs = [("en", "English")]
             else:
-                target_langs = [("ZH-TW", "繁體中文")]
+                target_langs = [("zh-tw", "繁體中文")]
 
             embeds = []
             for lang_code, lang_label in target_langs:
-                result = translator.translate_text(text, target_lang=lang_code)
+                result = translator.translate(text, dest=lang_code)
                 embed = discord.Embed(
                     title=f"🌐 翻譯完成 / Translation Result ({lang_label})",
                     color=discord.Color.blue()
@@ -546,6 +546,7 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+
 @tree.context_menu(name="翻譯此訊息 / Translate Message")
 async def context_translate(interaction: discord.Interaction, message: discord.Message):
     try:
@@ -557,7 +558,7 @@ async def context_translate(interaction: discord.Interaction, message: discord.M
             return
 
         target_lang = "en" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "zh-tw"
-        result = translator.translate_text(text, target_lang=target_lang)
+        result = translator.translate(text, dest=target_lang)
 
         embed = discord.Embed(
             title="🌐 翻譯完成 / Translation Result",
