@@ -3,13 +3,13 @@ import os
 import re
 import json
 import pytz
+import deepl
 import base64
 import discord
 import aiohttp
 import firebase_admin
 from dotenv import load_dotenv
 from discord import app_commands
-from googletrans import Translator
 from discord.ui import View, Button
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta
@@ -504,52 +504,40 @@ async def on_ready():
     if not notify_loop.is_running():
         notify_loop.start()
 
-translator = Translator()
+DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
+translator = deepl.Translator(DEEPL_API_KEY)
 
 @bot.event
 async def on_message(message):
-    # 忽略機器人自己的訊息
     if message.author.bot:
         return
 
-    # 當 BOT 被提及並且是回覆某則訊息
     if bot.user in message.mentions and message.reference:
         try:
             original_msg = await message.channel.fetch_message(message.reference.message_id)
-            if original_msg:
-                text = original_msg.content
+            text = original_msg.content.strip()
+            if not text:
+                return
 
-                # 忽略空訊息
-                if not text.strip():
-                    return
+            # 簡單判斷：如果包含中文字就翻成英文，否則翻成繁體中文
+            target_lang = "EN" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "ZH"
 
-                # 嘗試語言偵測，失敗則預設英文
-                try:
-                    detected = translator.detect(text).lang.lower()
-                except Exception:
-                    detected = "en"
+            result = translator.translate_text(text, target_lang=target_lang)
 
-                # 決定目標語言
-                target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
+            embed = discord.Embed(
+                title="🈶 翻譯完成！Translation Result",
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
+            embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
+            embed.set_footer(text=f"目標語言 / Target: {target_lang}")
 
-                # 翻譯內容
-                result = translator.translate(text, dest=target_lang)
-
-                # 建立回應 Embed
-                embed = discord.Embed(
-                    title="🈶 翻譯完成！Translation Result",
-                    color=discord.Color.blue()
-                )
-                embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
-                embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
-                embed.set_footer(text=f"語言判定：{detected} → {target_lang}")
-
-                await message.reply(embed=embed)
+            await message.reply(embed=embed, ephemeral=True)
         except Exception as e:
-            await message.reply(f"⚠️ 翻譯失敗：{e}")
+            await message.reply(f"⚠️ 翻譯失敗：{e}", ephemeral=True)
 
-    # 讓其他 slash 指令繼續能運作
     await bot.process_commands(message)
+
 @tree.context_menu(name="翻譯此訊息 / Translate Message")
 async def context_translate(interaction: discord.Interaction, message: discord.Message):
     try:
@@ -560,9 +548,8 @@ async def context_translate(interaction: discord.Interaction, message: discord.M
             await interaction.followup.send("⚠️ 原文為空 / The original message is empty.", ephemeral=True)
             return
 
-        detected = translator.detect(text).lang.lower()
-        target_lang = "en" if detected in ["zh", "zh-tw", "zh-cn"] else "zh-tw"
-        result = translator.translate(text, dest=target_lang)
+        target_lang = "EN" if any(u'\u4e00' <= ch <= u'\u9fff' for ch in text) else "ZH"
+        result = translator.translate_text(text, target_lang=target_lang)
 
         embed = discord.Embed(
             title="🌐 翻譯完成 / Translation Result",
@@ -570,7 +557,7 @@ async def context_translate(interaction: discord.Interaction, message: discord.M
         )
         embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
         embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
-        embed.set_footer(text=f"語言偵測：{detected} → {target_lang}")
+        embed.set_footer(text=f"目標語言 / Target: {target_lang}")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
