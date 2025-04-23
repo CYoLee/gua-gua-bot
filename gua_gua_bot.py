@@ -519,10 +519,11 @@ async def on_message(message):
             if not text:
                 return
 
-            # 語言判斷
-            if re.search(r"[\u0E00-\u0E7F]", text):  # 泰文
+            detected = translator.detect(text).lang.lower()
+
+            if detected == "th":
                 target_langs = [("en", "English"), ("zh-tw", "繁體中文")]
-            elif any('\u4e00' <= ch <= '\u9fff' for ch in text):  # 中文
+            elif detected in ["zh-cn", "zh-tw", "zh"]:
                 target_langs = [("en", "English")]
             else:
                 target_langs = [("zh-tw", "繁體中文")]
@@ -536,13 +537,13 @@ async def on_message(message):
                 )
                 embed.add_field(name="📤 原文 / Original", value=text[:1024], inline=False)
                 embed.add_field(name="📥 翻譯 / Translated", value=result.text[:1024], inline=False)
-                embed.set_footer(text=f"目標語言 / Target: {lang_label}")
+                embed.set_footer(text=f"語言偵測 / Detected: {detected} → {lang_label}")
                 embeds.append(embed)
 
             for embed in embeds:
-                await message.reply(embed=embed)  # ❌ 不能加 ephemeral=True
+                await message.reply(embed=embed)
         except Exception as e:
-            await message.reply(f"⚠️ 翻譯失敗：{e}")  # 同樣不能加 ephemeral=True
+            await message.reply(f"⚠️ 翻譯失敗：{e}")
 
     await bot.process_commands(message)
 
