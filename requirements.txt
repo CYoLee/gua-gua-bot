@@ -7,3 +7,4 @@ googletrans==4.0.0-rc1
 python-dotenv
 pytz
 gunicorn
+discord.py==2.3.2
