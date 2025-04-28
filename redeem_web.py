@@ -16,7 +16,7 @@ async def redeem_submit(guild_id: str, player_id: str, code: str):
 
         try:
             for attempt in range(3):  # 最多重試3次
-                await page.goto("https://exchange.whiteoutgame.com/")
+                await page.goto("https://wos-giftcode.centurygame.com/")
                 
                 # 1. 輸入 Player ID
                 await page.fill('input[placeholder="請輸入角色ID"]', player_id)
