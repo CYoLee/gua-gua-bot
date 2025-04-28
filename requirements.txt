@@ -8,3 +8,7 @@ python-dotenv
 pytz
 gunicorn
 discord.py==2.3.2
+firebase-admin
+requests
+deepl
+nest_asyncio
