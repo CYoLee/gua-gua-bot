@@ -1,28 +1,40 @@
-# Dockerfile
-FROM mcr.microsoft.com/playwright/python:v1.51.0-jammy
+#Dockerfile
+# 使用官方python image
+FROM python:3.10-slim
 
+# 安裝系統套件
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    fonts-noto-cjk \
+    tesseract-ocr \
+    libglib2.0-0 \
+    libnss3 \
+    libgconf-2-4 \
+    libfontconfig1 \
+    libxss1 \
+    libasound2 \
+    libxtst6 \
+    libxrandr2 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libatk1.0-0 \
+    libgtk-3-0 \
+    --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# 工作目錄
 WORKDIR /app
 
-# 安裝中文字型與 OCR
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    tesseract-ocr-chi-tra \
-    fonts-wqy-zenhei \
-    && rm -rf /var/lib/apt/lists/*
-
 # 複製專案檔案
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . .
 
-# 安裝 Python 套件與 Playwright 瀏覽器
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# 安裝playwright瀏覽器
 RUN playwright install --with-deps
 
-# 環境變數設定
-RUN PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium
-ENV PLAYWRIGHT_CHROMIUM_ARGS="--no-sandbox --disable-dev-shm-usage"
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONIOENCODING=utf-8
-
-# 執行主程式
-CMD ["python", "redeem_web.py"]
+# 預設啟動
+CMD ["uvicorn", "redeem_web:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -136,7 +136,7 @@ async def list_ids(interaction: discord.Interaction):
 
         players = result.get("players", [])
         if not players:
-            await interaction.response.send_message("📭 沒有任何 ID / No player ID found", ephemeral=True)
+            await interaction.followup.send("📭 沒有任何 ID / No player ID found", ephemeral=True)
             return
 
         PAGE_SIZE = 20
@@ -181,10 +181,11 @@ async def list_ids(interaction: discord.Interaction):
                 await self.update_message(interaction)
 
         view = PageView()
-        await interaction.response.send_message(content=format_page(1), view=view, ephemeral=True)
+        await interaction.followup.send(content=format_page(1), view=view, ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
+
 
 # === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
@@ -198,64 +199,29 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         if player_id and not player_id.strip().isdigit():
             await interaction.response.send_message("❌ 玩家 ID 格式錯誤 / Invalid player ID", ephemeral=True)
             return
-        await interaction.response.send_message("🎁 兌換處理中，請稍候... 此過程可能需要一些時間，請勿重複提交。\n(Redeem is being processed, please wait... This may take some time, please do not submit again.)", ephemeral=True)
-        
+
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
         guild_id = str(interaction.guild_id)
-        payload = {"code": code, "guild_id": guild_id}
-        if player_id:
-            payload["player_id"] = player_id
+        payload = {
+            "guild_id": guild_id,
+            "code": code,
+            "player_id": player_id or ""
+        }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
-                try:
-                    if resp.headers.get("Content-Type", "").startswith("application/json"):
-                        result = await resp.json()
-                        print(f"[Debug] Cloud Run 回傳結果：{result}")  # Debug log
-                        if not isinstance(result, dict):
-                            await interaction.followup.send(f"⚠️ 非預期格式 / Unexpected format: {result}", ephemeral=True)
-                            return
-                    else:
-                        text = await resp.text()
-                        if "502" in text or "Server Error" in text:
-                            await interaction.followup.send(
-                                "⚠️ 系統目前可能正在啟動或忙碌中，請稍後再試一次。\n(System may be initializing or under load. Please try again shortly.)",
-                                ephemeral=True
-                            )
-                        else:
-                            await interaction.followup.send(f"⚠️ 非預期回應內容：\n{text[:500]}", ephemeral=True)
-                        return
-                except Exception as e:
-                    await interaction.followup.send(f"❌ 發生錯誤 / Error occurred: {str(e)}", ephemeral=True)
+            async with session.post(f"{REDEEM_API_URL}/redeem_submit", params=payload) as resp:
+                if resp.headers.get("Content-Type", "").startswith("application/json"):
+                    result = await resp.json()
+                else:
+                    text = await resp.text()
+                    await interaction.followup.send(f"⚠️ 非預期回應內容：\n{text[:500]}", ephemeral=True)
                     return
 
-        # 檢查空結果
-        if not result.get("success") and not result.get("fails"):
-            await interaction.followup.send("⚠️ 沒有收到任何成功或失敗結果，請確認後端是否正常處理\n(No success or failure results received, please check if the backend is processing correctly.)", ephemeral=True)
-            return
-
-        # === 整理回應訊息 ===
-        msg_lines = [result.get("message", "🎁 兌換結果如下 (Redeem results as follows)").strip()]
-
-        # 成功 ID
-        success_ids = [item.get("player_id", "未知ID") for item in result.get("success", [])]
-        if success_ids:
-            msg_lines.append(f"✅ 成功 Success IDs: {', '.join(success_ids)}")
-
-        # 失敗 ID
-        fail_items = result.get("fails", [])
-        if fail_items:
-            for f in fail_items:
-                msg_lines.append(f"❌ 失敗 Failure: {f.get('player_id')} - {f.get('reason')}")
-
-        full_message = "\n".join(msg_lines)
-
-        if len(full_message) > 2000:
-            await interaction.followup.send(
-                f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節\n(Success/Failure list too long, details skipped.)",
-                ephemeral=True
-            )
+        if result.get("success"):
+            await interaction.followup.send(f"✅ 兌換成功！\n{result.get('message', '')}", ephemeral=True)
         else:
-            await interaction.followup.send(full_message, ephemeral=True)
+            await interaction.followup.send(f"❌ 兌換失敗！\n{result.get('message') or result.get('error')}", ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤 / Error occurred: {e}", ephemeral=True)
