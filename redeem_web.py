@@ -29,7 +29,7 @@ RETRY_KEYWORDS = ["伺服器繁忙", "請稍後再試", "系統異常", "請重�
 # === 核心兌換流程 ===
 async def redeem_code(player_id: str, code: str):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--disable-gpu"])
+        browser = await p.chromium.launch(headless=False, slow_mo=300)
         context = await browser.new_context(locale="zh-TW")
         page = await context.new_page()
 
