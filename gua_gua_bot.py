@@ -100,6 +100,7 @@ async def add_id(interaction: discord.Interaction, player_ids: str):
 @app_commands.describe(player_id="要移除的 ID / ID to remove")
 async def remove_id(interaction: discord.Interaction, player_id: str):
     try:
+        await interaction.response.defer(thinking=True, ephemeral=True)
         guild_id = str(interaction.guild_id)
         ref = db.collection("ids").document(guild_id).collection("players").document(player_id)
         doc = ref.get()
@@ -108,7 +109,7 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
             info = doc.to_dict()
             ref.delete()
             msg = f"✅ 已移除 / Removed player_id `{player_id}`"
-            await interaction.response.send_message(msg, ephemeral=True)
+            await interaction.followup.send(msg, ephemeral=True)
 
             # === 傳送到監控頻道 ===
             log_channel = bot.get_channel(1356431597150408786)
@@ -121,7 +122,7 @@ async def remove_id(interaction: discord.Interaction, player_id: str):
                     f"📌 移除 ID：{player_id} {f'({nickname})' if nickname else ''}"
                 )
         else:
-            await interaction.response.send_message(f"❌ 找不到該 ID / ID not found `{player_id}`", ephemeral=True)
+            await interaction.followup.send(f"❌ 找不到該 ID / ID not found `{player_id}`", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
@@ -181,7 +182,7 @@ async def list_ids(interaction: discord.Interaction):
                 await self.update_message(interaction)
 
         view = PageView()
-        await interaction.response.send_message(content=format_page(1), view=view, ephemeral=True)
+        await interaction.followup.send(content=format_page(1), view=view, ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
@@ -323,15 +324,19 @@ async def list_notify(interaction: discord.Interaction):
 @app_commands.describe(index="提醒編號 / Reminder index")
 async def remove_notify(interaction: discord.Interaction, index: int):
     try:
-        docs = list(db.collection("notifications").where("guild_id", "==", str(interaction.guild_id)).order_by("datetime").stream())
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        docs = list(db.collection("notifications")
+                    .where("guild_id", "==", str(interaction.guild_id))
+                    .order_by("datetime")
+                    .stream())
         real_index = index - 1
         if real_index < 0 or real_index >= len(docs):
-            await interaction.response.send_message("❌ index 無效 / Invalid index", ephemeral=True)
+            await interaction.followup.send("❌ index 無效 / Invalid index", ephemeral=True)
             return
         doc = docs[real_index]
         data = doc.to_dict()
         db.collection("notifications").document(doc.id).delete()
-        await interaction.response.send_message(f"🗑️ 已刪除 / Removed reminder #{index}: {data['message']}", ephemeral=True)
+        await interaction.followup.send(f"🗑️ 已刪除 / Removed reminder #{index}: {data['message']}", ephemeral=True)
 
         # 推送到監控頻道
         log_channel = bot.get_channel(1356431597150408786)
@@ -344,7 +349,7 @@ async def remove_notify(interaction: discord.Interaction, index: int):
             )
 
     except Exception as e:
-        await interaction.response.send_message(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 @tree.command(name="edit_notify", description="編輯提醒 / Edit reminder")
 @app_commands.describe(
