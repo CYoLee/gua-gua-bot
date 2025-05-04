@@ -7,9 +7,11 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     fonts-noto-cjk \
+    fonts-dejavu-core \
     tesseract-ocr \
     libglib2.0-0 \
     libnss3 \
+    libgl1 \
     libgconf-2-4 \
     libfontconfig1 \
     libxss1 \

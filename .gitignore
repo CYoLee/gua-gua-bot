@@ -54,3 +54,7 @@ lib-cov/
 .lock-wscript
 .eslintcache
 .node_repl_history
+debug_test.py
+run_debug.py
+debug/
+list.json
