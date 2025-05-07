@@ -7,6 +7,7 @@ import pytz
 import base64
 import discord
 import aiohttp
+import requests
 import firebase_admin
 from dotenv import load_dotenv
 from discord import app_commands
