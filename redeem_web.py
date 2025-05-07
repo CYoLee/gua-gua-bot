@@ -1,3 +1,4 @@
+# redeem_web.py
 import asyncio
 import base64
 import json
@@ -14,6 +15,9 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
 from PIL import Image
+import subprocess
+print("=== pip list ===")
+print(subprocess.getoutput("pip list"))
 import cv2
 import numpy as np
 import pytesseract
@@ -49,10 +53,10 @@ RETRY_KEYWORDS = ["驗證碼錯誤", "驗證碼已過期", "伺服器繁忙", "�
 REDEEM_RETRIES = 9
 # === 主流程 ===
 
-async def run_redeem_with_retry(player_id, code, max_retries=REDEEM_RETRIES):
+async def run_redeem_with_retry(player_id, code, debug=False):  # 加 debug
     debug_logs = []
-    for redeem_retry in range(max_retries + 1):
-        result = await _redeem_once(player_id, code, debug_logs, redeem_retry)
+    for redeem_retry in range(REDEEM_RETRIES + 1):
+        result = await _redeem_once(player_id, code, debug_logs, redeem_retry, debug=debug)  # 傳入 debug
         if not result:
             result = {"success": False, "reason": "無回應", "debug_logs": debug_logs}
         if result.get("success"):
@@ -74,7 +78,7 @@ async def run_redeem_with_retry(player_id, code, max_retries=REDEEM_RETRIES):
     return result
 
 
-async def _redeem_once(player_id, code, debug_logs, redeem_retry):
+async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
     browser = None
 
     def log_entry(attempt, **kwargs):
@@ -95,7 +99,9 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry):
             try:
                 await page.wait_for_selector(".name", timeout=8000)
             except TimeoutError:
-                return await _package_result(page, False, "登入失敗，角色名稱未出現", player_id, debug_logs)
+                msg = "登入階段 timeout"
+                log_entry(0, error=msg)
+                return await _package_result(page, False, msg, player_id, debug_logs, debug=debug)
 
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
 
@@ -135,9 +141,9 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry):
                                         return await _package_result(page, False, message, player_id, debug_logs)
 
                                     if "成功" in message:
-                                        return await _package_result(page, True, message, player_id, debug_logs)
+                                        return await _package_result(page, True, message, player_id, debug_logs, debug=debug)
 
-                                    return await _package_result(page, False, f"未知錯誤：{message}", player_id, debug_logs)
+                                    return await _package_result(page, False, f"未知錯誤：{message}", player_id, debug_logs, debug=debug)
 
                             await page.wait_for_timeout(300)
 
@@ -157,10 +163,24 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry):
                     await _refresh_captcha(page)
                     await page.wait_for_timeout(1000)
 
-            return await _package_result(page, False, f"OCR辨識失敗超過{OCR_MAX_RETRIES}次", player_id, debug_logs)
-
+            return await _package_result(page, False, "訊息", player_id, debug_logs, debug=debug)
     except Exception:
+        if debug:
+            try:
+                date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
+                os.makedirs(date_folder, exist_ok=True)
+                html = await page.content() if 'page' in locals() else "<no page>"
+                screenshot = await page.screenshot() if 'page' in locals() else None
+                with open(f"{date_folder}/debug_exception.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+                if screenshot:
+                    with open(f"{date_folder}/debug_exception.png", "wb") as f:
+                        f.write(screenshot)
+            except:
+                pass
+
         return {"player_id": player_id, "success": False, "reason": "例外錯誤", "debug_logs": debug_logs}
+
     finally:
         if browser:
             await browser.close()
@@ -245,7 +265,7 @@ async def _solve_captcha(page, attempt, player_id):
             print(f"[Captcha] 辨識完成（使用：{method_used}）：{final_text or fallback_text}")
 
         # 2Captcha fallback
-        if not final_text:
+        if not final_text or attempt == OCR_MAX_RETRIES:
             print(f"[Captcha] 嘗試使用 2Captcha（第 {attempt} 次）")
             result = solve_with_2captcha(captcha_bytes)
             if result:
@@ -402,24 +422,24 @@ async def _refresh_captcha(page):
         if DEBUG_MODE:
             print(f"[Captcha Refresh Error] {str(e)}")
 
-async def _package_result(page, success, message, player_id, debug_logs):
+async def _package_result(page, success, message, player_id, debug_logs, debug=False):
     try:
-        if DEBUG_MODE:
-            date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
-            os.makedirs(date_folder, exist_ok=True)
-            html = await page.content()
-            screenshot = await page.screenshot()
-            with open(f"{date_folder}/debug.html", "w", encoding="utf-8") as f:
-                f.write(html)
-            with open(f"{date_folder}/debug.png", "wb") as f:
-                f.write(screenshot)
-        return {
+        result = {
             "player_id": player_id,
             "success": success,
             "reason": message if not success else None,
             "message": message if success else None,
             "debug_logs": debug_logs
         }
+
+        if debug:
+            html = await page.content()
+            screenshot = await page.screenshot()
+            result["debug_html_base64"] = base64.b64encode(html.encode("utf-8")).decode("utf-8")
+            result["debug_img_base64"] = base64.b64encode(screenshot).decode("utf-8")
+
+        return result
+
     except Exception:
         return {
             "player_id": player_id,
@@ -484,20 +504,42 @@ def add_id():
     except Exception as e:
         return jsonify({"success": False, "reason": str(e)}), 500
 
+@app.route("/list_ids", methods=["GET"])
+def list_ids():
+    try:
+        guild_id = request.args.get("guild_id")
+        if not guild_id:
+            return jsonify({"success": False, "reason": "缺少 guild_id"}), 400
+
+        docs = db.collection("ids").document(guild_id).collection("players").stream()
+        players = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+
+        return jsonify({"success": True, "players": players})
+
+    except Exception as e:
+        return jsonify({"success": False, "reason": str(e)}), 500
+
 @app.route("/redeem_submit", methods=["POST"])
 def redeem_submit():
     data = request.json
     code = data.get("code")
     player_id = data.get("player_id")
+    debug = data.get("debug", False)
+
     if not code or not player_id:
         return jsonify({"success": False, "reason": "缺少 code 或 player_id"}), 400
 
     async def async_main():
-        return await run_redeem_with_retry(player_id, code)
+        return await run_redeem_with_retry(player_id, code, debug=debug)
 
     asyncio.set_event_loop(asyncio.new_event_loop())
     result = asyncio.run(async_main())
-    return jsonify(result)
+
+    return jsonify({
+        "success": [result] if result.get("success") else [],
+        "fails": [result] if not result.get("success") else [],
+        "message": "兌換完成（單人）"
+    })
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
@@ -562,4 +604,5 @@ def health():
     return "Worker ready for redeeming!"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", 8080))  # Cloud Run 預設 PORT
+    app.run(host="0.0.0.0", port=port)

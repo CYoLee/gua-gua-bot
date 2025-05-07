@@ -12,3 +12,6 @@ firebase-admin
 requests
 deepl
 nest_asyncio
+flask
+opencv-python-headless
+easyocr

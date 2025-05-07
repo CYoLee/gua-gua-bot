@@ -1,0 +1,41 @@
+# === Python 暫存與編譯檔 ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# === 虛擬環境與依賴檔 ===
+.venv/
+venv/
+node_modules/
+
+# === 不需打包的本地設定與憑證 ===
+.env
+.env.*
+firebase_key.json
+encoded_key.txt
+gothic-depth-456114-c3-firebase-adminsdk-*.json
+
+# === 本地開發與日誌 ===
+*.log
+*.tar
+build.log
+recent_logs.log
+list.json
+captcha_usage.txt
+debug/
+debug_test.py
+run_debug.py
+test_redeem.py
+
+# === 工具雜項與 IDE 檔案 ===
+.vscode/
+.idea/
+*.swp
+.pids
+*.pid
+*.pid.lock
+
+# === Git 資料 ===
+.git/
+.gitattributes

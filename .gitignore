@@ -59,3 +59,5 @@ run_debug.py
 debug/
 list.json
 captcha_usage.txt
+test_redeem.py
+env.json

@@ -199,67 +199,67 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         if player_id and not player_id.strip().isdigit():
             await interaction.response.send_message("❌ 玩家 ID 格式錯誤 / Invalid player ID", ephemeral=True)
             return
-        await interaction.response.send_message("🎁 兌換處理中，請稍候... 此過程可能需要一些時間，請勿重複提交。\n(Redeem is being processed, please wait... This may take some time, please do not submit again.)", ephemeral=True)
-        
+
+        await interaction.response.send_message("🎁 兌換處理中，請稍候...\n(Redeem is being processed, please wait...)", ephemeral=True)
+
         guild_id = str(interaction.guild_id)
         payload = {"code": code, "guild_id": guild_id}
         if player_id:
             payload["player_id"] = player_id
+        payload["debug"] = True  # 強制 debug 模式讓 Cloud Run 傳回 base64
 
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
-                try:
-                    if resp.headers.get("Content-Type", "").startswith("application/json"):
-                        result = await resp.json()
-                        print(f"[Debug] Cloud Run 回傳結果：{result}")  # Debug log
-                        if not isinstance(result, dict):
-                            await interaction.followup.send(f"⚠️ 非預期格式 / Unexpected format: {result}", ephemeral=True)
-                            return
-                    else:
-                        text = await resp.text()
-                        if "502" in text or "Server Error" in text:
-                            await interaction.followup.send(
-                                "⚠️ 系統目前可能正在啟動或忙碌中，請稍後再試一次。\n(System may be initializing or under load. Please try again shortly.)",
-                                ephemeral=True
-                            )
-                        else:
-                            await interaction.followup.send(f"⚠️ 非預期回應內容：\n{text[:500]}", ephemeral=True)
-                        return
-                except Exception as e:
-                    await interaction.followup.send(f"❌ 發生錯誤 / Error occurred: {str(e)}", ephemeral=True)
+                if resp.headers.get("Content-Type", "").startswith("application/json"):
+                    result = await resp.json()
+                    print(f"[Debug] Cloud Run 回傳結果：{result}")
+                else:
+                    text = await resp.text()
+                    await interaction.followup.send(f"⚠️ 非預期回應內容：\n{text[:500]}", ephemeral=True)
                     return
 
-        # 檢查空結果
         if not result.get("success") and not result.get("fails"):
-            await interaction.followup.send("⚠️ 沒有收到任何成功或失敗結果，請確認後端是否正常處理\n(No success or failure results received, please check if the backend is processing correctly.)", ephemeral=True)
+            await interaction.followup.send("⚠️ 沒有收到成功或失敗結果，請確認後端是否正常運作", ephemeral=True)
             return
 
-        # === 整理回應訊息 ===
-        msg_lines = [result.get("message", "🎁 兌換結果如下 (Redeem results as follows)").strip()]
-
-        # 成功 ID
+        # 整理訊息
+        msg_lines = [result.get("message", "🎁 兌換結果如下：").strip()]
         success_ids = [item.get("player_id", "未知ID") for item in result.get("success", [])]
         if success_ids:
             msg_lines.append(f"✅ 成功 Success IDs: {', '.join(success_ids)}")
 
-        # 失敗 ID
         fail_items = result.get("fails", [])
+        files = []
+
         if fail_items:
             for f in fail_items:
-                msg_lines.append(f"❌ 失敗 Failure: {f.get('player_id')} - {f.get('reason')}")
+                pid = f.get("player_id", "未知ID")
+                reason = f.get("reason", "未知原因")
+                msg_lines.append(f"❌ 失敗 Failure: {pid} - {reason}")
+
+                debug_logs = f.get("debug_logs")
+                if debug_logs:
+                    msg_lines.append(f"🪵 Debug log: ```\n{json.dumps(debug_logs[-2:], indent=2, ensure_ascii=False)}```")
+
+                if f.get("debug_img_base64"):
+                    img_bytes = base64.b64decode(f["debug_img_base64"])
+                    files.append(discord.File(io.BytesIO(img_bytes), filename="debug.png"))
+                    msg_lines.append(f"[📸 螢幕截圖](attachment://debug.png)")
+
+                if f.get("debug_html_base64"):
+                    html_bytes = base64.b64decode(f["debug_html_base64"])
+                    files.append(discord.File(io.BytesIO(html_bytes), filename="debug.html"))
+                    msg_lines.append(f"[📄 HTML 原始碼](attachment://debug.html)")
 
         full_message = "\n".join(msg_lines)
 
         if len(full_message) > 2000:
-            await interaction.followup.send(
-                f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節\n(Success/Failure list too long, details skipped.)",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節", ephemeral=True)
         else:
-            await interaction.followup.send(full_message, ephemeral=True)
+            await interaction.followup.send(full_message, ephemeral=True, files=files if files else None)
 
     except Exception as e:
-        await interaction.followup.send(f"❌ 發生錯誤 / Error occurred: {e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 發生錯誤 / Error: {e}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
@@ -585,17 +585,19 @@ async def update_names(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True, ephemeral=True)
     guild_id = str(interaction.guild_id)
 
-    # 取得目前 Firestore 儲存的所有 ID
     ref = db.collection("ids").document(guild_id).collection("players")
-    docs = ref.stream()
+
+    try:
+        docs = list(ref.stream(timeout=30))
+    except Exception as e:
+        await interaction.followup.send(f"❌ 無法讀取 Firestore 名單：{e}", ephemeral=True)
+        return
 
     updated = []
 
     async with aiohttp.ClientSession() as session:
         for doc in docs:
             pid = doc.id
-
-            # 重新查詢該 ID 的名稱（調用後端）
             async with session.post(f"{REDEEM_API_URL}/add_id", json={
                 "guild_id": guild_id,
                 "player_id": pid
