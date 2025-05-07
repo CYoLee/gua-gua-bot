@@ -523,23 +523,48 @@ def list_ids():
 def redeem_submit():
     data = request.json
     code = data.get("code")
-    player_id = data.get("player_id")
+    player_ids = data.get("player_ids")
     debug = data.get("debug", False)
 
-    if not code or not player_id:
-        return jsonify({"success": False, "reason": "缺少 code 或 player_id"}), 400
+    if not code or not player_ids:
+        return jsonify({"success": False, "reason": "缺少 code 或 player_ids"}), 400
 
-    async def async_main():
-        return await run_redeem_with_retry(player_id, code, debug=debug)
+    if not isinstance(player_ids, list):
+        return jsonify({"success": False, "reason": "player_ids 必須是列表"}), 400
+
+    MAX_BATCH_SIZE = 5
+
+    async def process_all():
+        all_success = []
+        all_fail = []
+
+        for i in range(0, len(player_ids), MAX_BATCH_SIZE):
+            batch = player_ids[i:i + MAX_BATCH_SIZE]
+            tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
+            results = await asyncio.gather(*tasks)
+
+            for r in results:
+                if r.get("success"):
+                    all_success.append({"player_id": r["player_id"], "message": r.get("message")})
+                else:
+                    all_fail.append({
+                        "player_id": r["player_id"],
+                        "reason": r.get("reason"),
+                        "debug_logs": r.get("debug_logs"),
+                        "debug_img_base64": r.get("debug_img_base64"),
+                        "debug_html_base64": r.get("debug_html_base64")
+                    })
+
+        return {
+            "success": all_success,
+            "fails": all_fail,
+            "message": f"兌換完成，共成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆"
+        }
 
     asyncio.set_event_loop(asyncio.new_event_loop())
-    result = asyncio.run(async_main())
+    result = asyncio.run(process_all())
 
-    return jsonify({
-        "success": [result] if result.get("success") else [],
-        "fails": [result] if not result.get("success") else [],
-        "message": "兌換完成（單人）"
-    })
+    return jsonify(result)
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():

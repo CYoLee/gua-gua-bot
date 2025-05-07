@@ -189,77 +189,47 @@ async def list_ids(interaction: discord.Interaction):
 
 # === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
-@app_commands.describe(code="兌換碼 / Redeem code", player_id="玩家 ID（選填） / Player ID (optional)")
-async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
+@app_commands.describe(code="要兌換的禮包碼")
+async def redeem_submit(interaction: discord.Interaction, code: str):
+    await interaction.response.defer(thinking=True)
+
+    # 從 Firestore 取得所有 ID（guild_id 來自 interaction.guild_id）
     try:
-        if not code.strip():
-            await interaction.response.send_message("❌ 請提供有效的兌換碼 / Code is required", ephemeral=True)
+        docs = db.collection("ids").document(str(interaction.guild_id)).collection("players").stream()
+        player_ids = [doc.id for doc in docs]
+        if not player_ids:
+            await interaction.followup.send("❌ 沒有找到任何 ID。請先用 `/add_id` 新增。")
             return
-
-        if player_id and not player_id.strip().isdigit():
-            await interaction.response.send_message("❌ 玩家 ID 格式錯誤 / Invalid player ID", ephemeral=True)
-            return
-
-        await interaction.response.send_message("🎁 兌換處理中，請稍候...\n(Redeem is being processed, please wait...)", ephemeral=True)
-
-        guild_id = str(interaction.guild_id)
-        payload = {"code": code, "guild_id": guild_id}
-        if player_id:
-            payload["player_id"] = player_id
-        payload["debug"] = True  # 強制 debug 模式讓 Cloud Run 傳回 base64
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f"{REDEEM_API_URL}/redeem_submit", json=payload) as resp:
-                if resp.headers.get("Content-Type", "").startswith("application/json"):
-                    result = await resp.json()
-                    print(f"[Debug] Cloud Run 回傳結果：{result}")
-                else:
-                    text = await resp.text()
-                    await interaction.followup.send(f"⚠️ 非預期回應內容：\n{text[:500]}", ephemeral=True)
-                    return
-
-        if not result.get("success") and not result.get("fails"):
-            await interaction.followup.send("⚠️ 沒有收到成功或失敗結果，請確認後端是否正常運作", ephemeral=True)
-            return
-
-        # 整理訊息
-        msg_lines = [result.get("message", "🎁 兌換結果如下：").strip()]
-        success_ids = [item.get("player_id", "未知ID") for item in result.get("success", [])]
-        if success_ids:
-            msg_lines.append(f"✅ 成功 Success IDs: {', '.join(success_ids)}")
-
-        fail_items = result.get("fails", [])
-        files = []
-
-        if fail_items:
-            for f in fail_items:
-                pid = f.get("player_id", "未知ID")
-                reason = f.get("reason", "未知原因")
-                msg_lines.append(f"❌ 失敗 Failure: {pid} - {reason}")
-
-                debug_logs = f.get("debug_logs")
-                if debug_logs:
-                    msg_lines.append(f"🪵 Debug log: ```\n{json.dumps(debug_logs[-2:], indent=2, ensure_ascii=False)}```")
-
-                if f.get("debug_img_base64"):
-                    img_bytes = base64.b64decode(f["debug_img_base64"])
-                    files.append(discord.File(io.BytesIO(img_bytes), filename="debug.png"))
-                    msg_lines.append(f"[📸 螢幕截圖](attachment://debug.png)")
-
-                if f.get("debug_html_base64"):
-                    html_bytes = base64.b64decode(f["debug_html_base64"])
-                    files.append(discord.File(io.BytesIO(html_bytes), filename="debug.html"))
-                    msg_lines.append(f"[📄 HTML 原始碼](attachment://debug.html)")
-
-        full_message = "\n".join(msg_lines)
-
-        if len(full_message) > 2000:
-            await interaction.followup.send(f"{result['message']}\n⚠️ 成功/失敗名單過長，已略過細節", ephemeral=True)
-        else:
-            await interaction.followup.send(full_message, ephemeral=True, files=files if files else None)
-
     except Exception as e:
-        await interaction.followup.send(f"❌ 發生錯誤 / Error: {e}", ephemeral=True)
+        await interaction.followup.send(f"⚠️ 讀取 Firestore 發生錯誤：{str(e)}")
+        return
+
+    # 呼叫後端 API 分批送出（預設 debug 為 False）
+    try:
+        api_url = os.getenv("REDEEM_API_URL", "").rstrip("/") + "/redeem_submit"
+        payload = {
+            "code": code,
+            "player_ids": player_ids,
+            "debug": False
+        }
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(api_url, headers=headers, json=payload, timeout=180)
+        result = response.json()
+    except Exception as e:
+        await interaction.followup.send(f"❌ 呼叫後端 API 失敗：{str(e)}")
+        return
+
+    # 成功與失敗統計
+    success_list = result.get("success", [])
+    fail_list = result.get("fails", [])
+
+    success_count = len(success_list)
+    fail_count = len(fail_list)
+
+    msg = f"🎁 禮包碼 `{code}` 提交完成\n✅ 成功：{success_count} 筆\n❌ 失敗：{fail_count} 筆"
+
+    msg += "\n📦 詳細錯誤請查看後端 Logs（Railway Deploy logs）"
+    await interaction.followup.send(content=msg)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
