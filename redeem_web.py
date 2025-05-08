@@ -62,7 +62,7 @@ db = firestore.client()
 
 FAILURE_KEYWORDS = ["請先輸入", "不存在", "錯誤", "無效", "超出", "無法", "類型", "已使用"]
 RETRY_KEYWORDS = ["驗證碼錯誤", "驗證碼已過期", "伺服器繁忙", "請稍後再試", "系統異常", "請重試", "處理中"]
-REDEEM_RETRIES = 9
+REDEEM_RETRIES = 3
 # === 主流程 ===
 
 async def run_redeem_with_retry(player_id, code, debug=False):  # 加 debug
@@ -71,6 +71,9 @@ async def run_redeem_with_retry(player_id, code, debug=False):  # 加 debug
         result = await _redeem_once(player_id, code, debug_logs, redeem_retry, debug=debug)  # 傳入 debug
         if not result:
             result = {"success": False, "reason": "無回應", "debug_logs": debug_logs}
+        if result.get("reason", "").startswith("_try"):
+            # 若 OCR fallback 都失敗，直接放棄，不再 retry
+            return result
         if result.get("success"):
             return result
         reason = result.get("reason", "")
@@ -198,10 +201,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
             await browser.close()
 
 async def _solve_captcha(page, attempt, player_id):
-    global reader
     fallback_text = f"_try{attempt}"
-    captcha_bytes = None
-    final_text = ""
     method_used = "none"
 
     try:
@@ -209,97 +209,26 @@ async def _solve_captcha(page, attempt, player_id):
         if not captcha_img:
             return fallback_text, method_used
 
-        src = await captcha_img.get_attribute("src")
-        if not src or "data:image" not in src:
+        await page.wait_for_timeout(500)
+        captcha_bytes = await captcha_img.screenshot()
+
+        if not captcha_bytes or len(captcha_bytes) < 1024:
             return fallback_text, method_used
 
-        await page.wait_for_timeout(800)
+        # 直接用 2Captcha，每次進來最多 retry 3 次
+        print(f"[Captcha] 使用 2Captcha 辨識（第 {attempt} 次）")
+        result = solve_with_2captcha(captcha_bytes)
 
-        for _ in range(10):
-            try:
-                box = await captcha_img.bounding_box()
-                if box and box["height"] > 10:
-                    captcha_bytes = await captcha_img.screenshot()
-                    if captcha_bytes and len(captcha_bytes) > 1024:
-                        break
-            except:
-                pass
-            await page.wait_for_timeout(300)
-
-        if not captcha_bytes:
-            if DEBUG_MODE:
-                _save_blank_captcha_image(player_id, attempt)
+        if result:
+            method_used = "2captcha"
+            print(f"[Captcha] 2Captcha 成功：{result}")
+            return result, method_used
+        else:
+            print(f"[Captcha] 2Captcha 辨識失敗")
             return fallback_text, method_used
 
-        # Image preprocessing
-        img = Image.open(io.BytesIO(captcha_bytes)).convert("L")
-        img = img.resize((img.width * 3, img.height * 3), Image.LANCZOS)
-        img_np = np.array(img)
-        img_np = cv2.copyMakeBorder(img_np, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=255)
-        img_np = cv2.adaptiveThreshold(img_np, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 15, 10)
-        img_np = cv2.medianBlur(img_np, 3)
-        kernel = np.ones((2, 2), np.uint8)
-        img_np = cv2.morphologyEx(img_np, cv2.MORPH_OPEN, kernel)
-        img_np = cv2.filter2D(img_np, -1, np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]]))
-
-        def clean_text(text):
-            corrections = {
-                "0": "O", "1": "I", "5": "S", "8": "B", "$": "S", "6": "G",
-                "l": "I", "|": "I", "2": "Z", "9": "g", "§": "S", "£": "E",
-                "4": "A", "@": "A"
-            }
-            for wrong, correct in corrections.items():
-                text = text.replace(wrong, correct)
-            return ''.join(filter(str.isalnum, text.strip().replace(" ", "").replace("\n", "")))
-
-        # Tesseract
-        text_tesseract = clean_text(pytesseract.image_to_string(Image.fromarray(img_np), lang="eng", config=OCR_CONFIG))
-
-        # EasyOCR fallback
-        text_easyocr = ""
-        if USE_EASYOCR and (not text_tesseract or len(text_tesseract) < 4):
-            if reader is None:
-                with suppress_stdout():  # 抑制雜訊輸出
-                    reader = easyocr.Reader(["en"], gpu=False)
-                result = reader.readtext(img_np, detail=0)
-                text_easyocr = clean_text(''.join(result))
-
-        # Choose the better one
-        if text_easyocr and len(text_easyocr) >= 4:
-            final_text = text_easyocr
-            method_used = "easyocr"
-        elif text_tesseract and len(text_tesseract) >= 4:
-            final_text = text_tesseract
-            method_used = "tesseract"
-
-        if DEBUG_MODE:
-            label = f"{final_text or fallback_text}_{method_used}"
-            _save_debug_captcha_image(img_np, label, player_id, attempt)
-            print(f"[Captcha] 辨識完成（使用：{method_used}）：{final_text or fallback_text}")
-
-        # 2Captcha fallback
-        if not final_text or attempt == OCR_MAX_RETRIES:
-            print(f"[Captcha] 嘗試使用 2Captcha（第 {attempt} 次）")
-            result = solve_with_2captcha(captcha_bytes)
-            if result:
-                print(f"[Captcha] 2Captcha 成功：{result}")
-                final_text = result
-                method_used = "2captcha"
-            else:
-                print("[Captcha] 2Captcha 辨識失敗")
-                return fallback_text, method_used
-
-        if DEBUG_MODE:
-            print(f"[Captcha] 最終驗證碼：{final_text} (辨識方式：{method_used})")
-
-        return final_text, method_used
-
-    except Exception:
-        if DEBUG_MODE and captcha_bytes:
-            date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
-            os.makedirs(date_folder, exist_ok=True)
-            with open(f"{date_folder}/captcha_{player_id}_attempt{attempt}_error.png", "wb") as f:
-                f.write(captcha_bytes)
+    except Exception as e:
+        print(f"[Captcha] 例外錯誤：{str(e)}")
         return fallback_text, method_used
 
 def _clean_ocr_text(text):
@@ -369,14 +298,12 @@ def solve_with_2captcha(image_bytes):
         return None
 
     captcha_id = resp.get("request")
-    for _ in range(20):
-        time.sleep(5)
+    for _ in range(3):  # 最多 retry 3 次
+        time.sleep(3)
         result = requests.get(f"http://2captcha.com/res.php?key={CAPTCHA_API_KEY}&action=get&id={captcha_id}&json=1").json()
         if result.get("status") == 1:
             return result.get("request")
-        elif result.get("request") == "CAPCHA_NOT_READY":
-            continue
-        else:
+        elif result.get("request") != "CAPCHA_NOT_READY":
             return None
     return None
 
@@ -386,7 +313,7 @@ async def _refresh_captcha(page):
         captcha_img = await page.query_selector('.verify_pic')
         if not refresh_btn or not captcha_img:
             if DEBUG_MODE:
-                print("[Captcha] 找不到刷新按鈕或驗證碼圖片")
+                print("[Captcha] 無法定位驗證碼圖片或刷新按鈕")
             return
 
         # 儲存原圖 base64 hash（更準確判斷圖片是否變更）
