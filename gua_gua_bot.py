@@ -215,42 +215,45 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         await interaction.followup.send(f"⚠️ 讀取資料庫錯誤：{str(e)}", ephemeral=True)
         return
 
-    # 呼叫後端 API
+    # 呼叫後端 API（改為分批送出，每批最多 5 筆）
     try:
         api_url = os.getenv("REDEEM_API_URL", "").rstrip("/") + "/redeem_submit"
-        payload = {
-            "code": code,
-            "player_ids": player_ids,
-            "debug": False
-        }
         headers = {"Content-Type": "application/json"}
-        response = requests.post(api_url, headers=headers, json=payload, timeout=180)
+        MAX_BATCH = 5
 
-        if response.status_code != 200:
-            await interaction.followup.send(f"❌ API 回應異常（{response.status_code}）", ephemeral=True)
-            return
+        all_success = []
+        all_fail = []
 
-        try:
-            result = response.json()
-        except Exception as e:
-            await interaction.followup.send(f"⚠️ 後端回應格式錯誤：{str(e)}", ephemeral=True)
-            return
+        for i in range(0, len(player_ids), MAX_BATCH):
+            batch = player_ids[i:i + MAX_BATCH]
+            payload = {
+                "code": code,
+                "player_ids": batch,
+                "debug": False
+            }
+
+            try:
+                response = requests.post(api_url, headers=headers, json=payload, timeout=180)
+                if response.status_code == 200:
+                    result = response.json()
+                    all_success.extend(result.get("success", []))
+                    all_fail.extend(result.get("fails", []))
+                else:
+                    # 如果後端 HTTP 錯誤，也標為失敗
+                    all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{response.status_code}）"} for pid in batch])
+            except Exception as e:
+                all_fail.extend([{"player_id": pid, "reason": f"API 呼叫失敗：{e}"} for pid in batch])
+
+        # 結果統計
+        success_count = len(all_success)
+        fail_count = len(all_fail)
+        msg = f"🎁 禮包碼 `{code}` 提交完成\n✅ 成功：{success_count} 筆\n❌ 失敗：{fail_count} 筆"
+        msg += "\n📦 詳細錯誤請查看後端 Logs（Railway Deploy logs）"
+        await interaction.followup.send(content=msg)
 
     except Exception as e:
-        await interaction.followup.send(f"❌ 呼叫後端 API 失敗：{str(e)}", ephemeral=True)
-        return
+        await interaction.followup.send(f"❌ 呼叫後端 API 總體失敗：{str(e)}", ephemeral=True)
 
-    # 結果統計
-    success_list = result.get("success", [])
-    fail_list = result.get("fails", [])
-
-    success_count = len(success_list)
-    fail_count = len(fail_list)
-
-    msg = f"🎁 禮包碼 `{code}` 提交完成\n✅ 成功：{success_count} 筆\n❌ 失敗：{fail_count} 筆"
-    msg += "\n📦 詳細錯誤請查看後端 Logs（Railway Deploy logs）"
-
-    await interaction.followup.send(content=msg)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
