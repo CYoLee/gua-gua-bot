@@ -189,23 +189,33 @@ async def list_ids(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 # === Redeem 兌換 ===
+# === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
-@app_commands.describe(code="要兌換的禮包碼")
-async def redeem_submit(interaction: discord.Interaction, code: str):
+@app_commands.describe(
+    code="要兌換的禮包碼",
+    player_id="選填：指定兌換的玩家 ID（單人兌換）"
+)
+async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     await interaction.response.defer(thinking=True)
 
-    # 從 Firestore 取得所有 ID（guild_id 來自 interaction.guild_id）
+    # 決定要兌換的 player_ids
     try:
-        docs = db.collection("ids").document(str(interaction.guild_id)).collection("players").stream()
-        player_ids = [doc.id for doc in docs]
-        if not player_ids:
-            await interaction.followup.send("❌ 沒有找到任何 ID。請先用 `/add_id` 新增。")
-            return
+        if player_id:
+            if not re.match(r'^\d{9}$', player_id):
+                await interaction.followup.send("❌ 請輸入正確的 9 位數 ID。", ephemeral=True)
+                return
+            player_ids = [player_id]
+        else:
+            docs = db.collection("ids").document(str(interaction.guild_id)).collection("players").stream()
+            player_ids = [doc.id for doc in docs]
+            if not player_ids:
+                await interaction.followup.send("❌ 沒有找到任何 ID。請先用 `/add_id` 新增。", ephemeral=True)
+                return
     except Exception as e:
-        await interaction.followup.send(f"⚠️ 讀取 Firestore 發生錯誤：{str(e)}")
+        await interaction.followup.send(f"⚠️ 讀取資料庫錯誤：{str(e)}", ephemeral=True)
         return
 
-    # 呼叫後端 API 分批送出（預設 debug 為 False）
+    # 呼叫後端 API
     try:
         api_url = os.getenv("REDEEM_API_URL", "").rstrip("/") + "/redeem_submit"
         payload = {
@@ -215,12 +225,22 @@ async def redeem_submit(interaction: discord.Interaction, code: str):
         }
         headers = {"Content-Type": "application/json"}
         response = requests.post(api_url, headers=headers, json=payload, timeout=180)
-        result = response.json()
+
+        if response.status_code != 200:
+            await interaction.followup.send(f"❌ API 回應異常（{response.status_code}）", ephemeral=True)
+            return
+
+        try:
+            result = response.json()
+        except Exception as e:
+            await interaction.followup.send(f"⚠️ 後端回應格式錯誤：{str(e)}", ephemeral=True)
+            return
+
     except Exception as e:
-        await interaction.followup.send(f"❌ 呼叫後端 API 失敗：{str(e)}")
+        await interaction.followup.send(f"❌ 呼叫後端 API 失敗：{str(e)}", ephemeral=True)
         return
 
-    # 成功與失敗統計
+    # 結果統計
     success_list = result.get("success", [])
     fail_list = result.get("fails", [])
 
@@ -228,8 +248,8 @@ async def redeem_submit(interaction: discord.Interaction, code: str):
     fail_count = len(fail_list)
 
     msg = f"🎁 禮包碼 `{code}` 提交完成\n✅ 成功：{success_count} 筆\n❌ 失敗：{fail_count} 筆"
-
     msg += "\n📦 詳細錯誤請查看後端 Logs（Railway Deploy logs）"
+
     await interaction.followup.send(content=msg)
 
 # === 活動提醒 ===

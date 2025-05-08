@@ -3,7 +3,7 @@ FROM python:3.10-slim
 
 EXPOSE 8080
 
-# 安裝系統與必要套件（新增編譯相關）
+# 安裝系統與必要套件（包含 OCR、GUI 等）
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -32,15 +32,13 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# 安裝 Node.js（Playwright 需要）
+# 安裝 Node.js（Playwright 相依）
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g npm
+    apt-get install -y nodejs
 
 # 安裝 Playwright 至暫存資料夾（避免 cache 錯誤）
 RUN mkdir -p /tmp/pw && cd /tmp/pw && \
-    npm init -y && \
-    npm install --no-audit --no-fund --legacy-peer-deps playwright && \
+    npm install playwright && \
     npx playwright install --with-deps && \
     rm -rf /tmp/pw
 
@@ -49,13 +47,10 @@ WORKDIR /app
 
 # 安裝 Python 套件
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip show opencv-python-headless && \
-    pip freeze > installed.txt && \
-    cat installed.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 # 複製專案其他檔案
 COPY . .
 
-# 啟動命令
+# 預設啟動指令（可視狀況改為 uvicorn）
 CMD ["python", "redeem_web.py"]
