@@ -536,7 +536,7 @@ def redeem_submit():
     if not isinstance(player_ids, list):
         return jsonify({"success": False, "reason": "player_ids 必須是列表"}), 400
 
-    MAX_BATCH_SIZE = 3
+    MAX_BATCH_SIZE = 1
 
     async def process_all():
         all_success = []
