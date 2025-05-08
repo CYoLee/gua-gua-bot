@@ -8,6 +8,7 @@ import base64
 import discord
 import aiohttp
 import requests
+import asyncio
 import firebase_admin
 from dotenv import load_dotenv
 from discord import app_commands
@@ -233,16 +234,19 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
             }
 
             try:
-                response = requests.post(api_url, headers=headers, json=payload, timeout=180)
-                if response.status_code == 200:
-                    result = response.json()
-                    all_success.extend(result.get("success", []))
-                    all_fail.extend(result.get("fails", []))
-                else:
-                    # 如果後端 HTTP 錯誤，也標為失敗
-                    all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{response.status_code}）"} for pid in batch])
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(api_url, headers=headers, json=payload, timeout=180) as response:
+                        if response.status != 200:
+                            all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{response.status}）"} for pid in batch])
+                            continue
+
+                        result = await response.json()
+                        all_success.extend(result.get("success", []))
+                        all_fail.extend(result.get("fails", []))
+
             except Exception as e:
                 all_fail.extend([{"player_id": pid, "reason": f"API 呼叫失敗：{e}"} for pid in batch])
+            await asyncio.sleep(1)  # 每批延遲 1 秒
 
         # 結果統計
         success_count = len(all_success)

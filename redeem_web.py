@@ -8,6 +8,8 @@ import traceback
 import hashlib
 import requests
 import time
+import contextlib
+import sys
 
 from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright, TimeoutError
@@ -24,6 +26,16 @@ import pytesseract
 import nest_asyncio
 from datetime import datetime
 import easyocr
+
+@contextlib.contextmanager
+def suppress_stdout():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
 
 # === 初始化 ===
 app = Flask(__name__)
@@ -247,9 +259,10 @@ async def _solve_captcha(page, attempt, player_id):
         text_easyocr = ""
         if USE_EASYOCR and (not text_tesseract or len(text_tesseract) < 4):
             if reader is None:
-                reader = easyocr.Reader(["en"], gpu=False)
-            result = reader.readtext(img_np, detail=0)
-            text_easyocr = clean_text(''.join(result))
+                with suppress_stdout():  # 抑制雜訊輸出
+                    reader = easyocr.Reader(["en"], gpu=False)
+                result = reader.readtext(img_np, detail=0)
+                text_easyocr = clean_text(''.join(result))
 
         # Choose the better one
         if text_easyocr and len(text_easyocr) >= 4:
