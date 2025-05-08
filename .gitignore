@@ -61,3 +61,5 @@ list.json
 captcha_usage.txt
 test_redeem.py
 env.json
+output.json
+output_multi.json

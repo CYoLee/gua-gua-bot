@@ -432,12 +432,16 @@ async def _package_result(page, success, message, player_id, debug_logs, debug=F
             "debug_logs": debug_logs
         }
 
-        if debug:
-            html = await page.content()
-            screenshot = await page.screenshot()
-            result["debug_html_base64"] = base64.b64encode(html.encode("utf-8")).decode("utf-8")
-            result["debug_img_base64"] = base64.b64encode(screenshot).decode("utf-8")
-
+        if debug and page:
+            try:
+                html = await page.content()
+                screenshot = await page.screenshot()
+                result["debug_html_base64"] = base64.b64encode(html.encode("utf-8")).decode("utf-8")
+                result["debug_img_base64"] = base64.b64encode(screenshot).decode("utf-8")
+            except Exception as e:
+                result["debug_html_base64"] = None
+                result["debug_img_base64"] = None
+                debug_logs.append({"error": f"無法擷取 debug 畫面: {str(e)}"})
         return result
 
     except Exception:
