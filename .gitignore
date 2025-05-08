@@ -63,3 +63,4 @@ test_redeem.py
 env.json
 output.json
 output_multi.json
+debug_local/

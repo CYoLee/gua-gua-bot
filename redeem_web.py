@@ -18,8 +18,8 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from PIL import Image
 import subprocess
-print("=== pip list ===")
-print(subprocess.getoutput("pip list"))
+#print("=== pip list ===")
+#print(subprocess.getoutput("pip list"))
 import cv2
 import numpy as np
 import pytesseract
@@ -107,16 +107,31 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
             context = await browser.new_context(locale="zh-TW")
             page = await context.new_page()
             await page.goto("https://wos-giftcode.centurygame.com/", timeout=PAGE_LOAD_TIMEOUT)
-
             await page.fill('input[type="text"]', player_id)
-            await page.click(".login_btn")
-
+            await page.click(".login_btn")  # 必須補上，否則永遠不會登入
+            # 嘗試抓錯誤 modal
             try:
-                await page.wait_for_selector(".name", timeout=8000)
+                await page.wait_for_selector(".message_modal", timeout=5000)
+                modal_text = await page.inner_text(".message_modal .msg")
+                log_entry(0, error_modal=modal_text)
+                if any(k in modal_text for k in ["請先輸入", "不存在", "錯誤", "無效", "伺服器繁忙"]):
+                    return await _package_result(page, False, f"登入失敗：{modal_text}", player_id, debug_logs)
             except TimeoutError:
-                msg = "登入階段 timeout"
-                log_entry(0, error=msg)
-                return await _package_result(page, False, msg, player_id, debug_logs, debug=debug)
+                # 沒出錯誤 modal，再嘗試抓 .name
+                try:
+                    await page.wait_for_selector(".name", timeout=5000)
+                except TimeoutError:
+                    if debug:
+                        date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
+                        ts = datetime.now().strftime("%H%M%S")
+                        os.makedirs(date_folder, exist_ok=True)
+                        html = await page.content()
+                        screenshot = await page.screenshot()
+                        with open(f"{date_folder}/debug_login_fail_{player_id}_{ts}.html", "w", encoding="utf-8") as f:
+                            f.write(html)
+                        with open(f"{date_folder}/debug_login_fail_{player_id}_{ts}.png", "wb") as f:
+                            f.write(screenshot)
+                    return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs)
 
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
 
@@ -129,7 +144,6 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 
                     await page.fill('input[placeholder="請輸入驗證碼"]', captcha_text)
 
-                    # 主動點擊並偵測是否被 modal 擋住
                     try:
                         await page.click(".exchange_btn", timeout=3000)
                         await page.wait_for_timeout(1000)
@@ -142,7 +156,6 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                                     message = await msg_el.inner_text()
                                     log_entry(attempt, server_message=message)
 
-                                    # 點確認按鈕
                                     confirm_btn = await modal.query_selector(".confirm_btn")
                                     if confirm_btn and await confirm_btn.is_visible():
                                         await confirm_btn.click()
@@ -150,7 +163,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 
                                     if "驗證碼錯誤" in message or "驗證碼已過期" in message:
                                         await _refresh_captcha(page)
-                                        break  # 繼續下一次 OCR attempt
+                                        break
 
                                     if any(k in message for k in FAILURE_KEYWORDS):
                                         return await _package_result(page, False, message, player_id, debug_logs)
@@ -179,17 +192,19 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                     await page.wait_for_timeout(1000)
 
             return await _package_result(page, False, "訊息", player_id, debug_logs, debug=debug)
+
     except Exception:
         if debug:
             try:
                 date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
+                ts = datetime.now().strftime("%H%M%S")
                 os.makedirs(date_folder, exist_ok=True)
                 html = await page.content() if 'page' in locals() else "<no page>"
                 screenshot = await page.screenshot() if 'page' in locals() else None
-                with open(f"{date_folder}/debug_exception.html", "w", encoding="utf-8") as f:
+                with open(f"{date_folder}/debug_exception_{player_id}_{ts}.html", "w", encoding="utf-8") as f:
                     f.write(html)
                 if screenshot:
-                    with open(f"{date_folder}/debug_exception.png", "wb") as f:
+                    with open(f"{date_folder}/debug_exception_{player_id}_{ts}.png", "wb") as f:
                         f.write(screenshot)
             except:
                 pass
@@ -207,28 +222,29 @@ async def _solve_captcha(page, attempt, player_id):
     try:
         captcha_img = await page.query_selector(".verify_pic")
         if not captcha_img:
+            print(f"[Captcha] 第 {attempt} 次：未找到驗證碼圖片")
             return fallback_text, method_used
 
         await page.wait_for_timeout(500)
         captcha_bytes = await captcha_img.screenshot()
 
         if not captcha_bytes or len(captcha_bytes) < 1024:
+            print(f"[Captcha] 第 {attempt} 次：圖片資料不足，長度={len(captcha_bytes) if captcha_bytes else 0}")
             return fallback_text, method_used
 
-        # 直接用 2Captcha，每次進來最多 retry 3 次
         print(f"[Captcha] 使用 2Captcha 辨識（第 {attempt} 次）")
         result = solve_with_2captcha(captcha_bytes)
 
         if result:
             method_used = "2captcha"
-            print(f"[Captcha] 2Captcha 成功：{result}")
+            print(f"[Captcha] 第 {attempt} 次：2Captcha 成功辨識 → {result}")
             return result, method_used
         else:
-            print(f"[Captcha] 2Captcha 辨識失敗")
+            print(f"[Captcha] 第 {attempt} 次：2Captcha 辨識失敗，回傳 None")
             return fallback_text, method_used
 
     except Exception as e:
-        print(f"[Captcha] 例外錯誤：{str(e)}")
+        print(f"[Captcha] 第 {attempt} 次：例外錯誤：{str(e)}")
         return fallback_text, method_used
 
 def _clean_ocr_text(text):
@@ -492,11 +508,11 @@ def redeem_submit():
                     all_success.append({"player_id": r["player_id"], "message": r.get("message")})
                 else:
                     all_fail.append({
-                        "player_id": r["player_id"],
+                        "player_id": r.get("player_id"),
                         "reason": r.get("reason"),
-                        "debug_logs": r.get("debug_logs"),
-                        "debug_img_base64": r.get("debug_img_base64"),
-                        "debug_html_base64": r.get("debug_html_base64")
+                        "debug_logs": r.get("debug_logs", []),
+                        "debug_img_base64": r.get("debug_img_base64", None),
+                        "debug_html_base64": r.get("debug_html_base64", None)
                     })
 
         return {
