@@ -195,7 +195,8 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                     await _refresh_captcha(page)
                     await page.wait_for_timeout(1000)
 
-            return await _package_result(page, False, "訊息", player_id, debug_logs, debug=debug)
+            log_entry(attempt, info="驗證碼三次辨識皆失敗，放棄兌換")
+            return await _package_result(page, False, "驗證碼三次辨識皆失敗，放棄兌換", player_id, debug_logs, debug=debug)
 
     except Exception:
         if debug:

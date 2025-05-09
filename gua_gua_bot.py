@@ -10,6 +10,9 @@ import aiohttp
 import requests
 import asyncio
 import firebase_admin
+import logging
+import sys
+
 from dotenv import load_dotenv
 from discord import app_commands
 from googletrans import Translator
@@ -17,6 +20,15 @@ from discord.ui import View, Button
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta
 from firebase_admin import credentials, firestore
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.propagate = False  # 避免重複輸出
 
 # === ENV ===
 load_dotenv()
@@ -497,18 +509,18 @@ async def notify_loop():
                     f'{data.get("mention", "")} \n⏰ **活動提醒 / Reminder** ⏰\n{data["message"]}'
                 )
             except Exception as e:
-                print(f"[Error] 發送提醒失敗: {e}")
+                logger.info(f"[Error] 發送提醒失敗: {e}")
         db.collection("notifications").document(doc.id).delete()
 
 # === 上線後同步 ===
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    logger.info(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     try:
         synced = await tree.sync()
-        print(f"✅ Synced {len(synced)} global commands")
+        logger.info(f"✅ Synced {len(synced)} global commands: {[c.name for c in synced]}")
     except Exception as e:
-        print(f"❌ Failed to sync commands: {e}")
+        logger.info(f"❌ Failed to sync commands: {e}")
     if not notify_loop.is_running():
         notify_loop.start()
 

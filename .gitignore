@@ -1,52 +1,60 @@
-# === Python 編譯與執行檔 ===
+# === Python ===
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 
-# === 虛擬環境 ===
+# 虛擬環境
 .venv/
 venv/
 
-# === 環境變數與金鑰檔 ===
+# Python 執行暫存
+*.log
+debug/
+debug_local/
+debug_*.*
+captcha_usage.txt
+test_redeem.py
+output*.json
+run_debug.py
+list.json
+
+# === 環境與機密設定 ===
 .env
 .env.*
 firebase_key.json
 encoded_key.txt
 gothic-depth-456114-c3-firebase-adminsdk-*.json
+env.json
 
-# === 日誌與輸出檔 ===
-*.log
-*.tar
-build.log
-recent_logs.log
-
-# === Deploy 腳本與不需上傳的本地檔案 ===
+# === 部署腳本（避免上傳本地測試工具）===
 deploy*.ps1
 deploy*.sh
 deploy.bat
 
-# === Node / Web 相關的忽略（可視需求保留） ===
+# === Node / Web 前端 ===
 node_modules/
 bower_components/
+package-lock.json
+package.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log
 .yarn-integrity
 
-# === Firebase 雜項 ===
+# === Firebase 專案檔與除錯 ===
 .firebase/
+.firebaserc
 firebase-debug.log*
 firebase-debug.*.log*
-.firebaserc
 
-# === 測試與覆蓋率報告（可選） ===
+# === 測試 / 覆蓋率報告（可選） ===
 .nyc_output/
 coverage/
 lib-cov/
 
-# === 其他工具產生的暫存檔 ===
+# === 雜項工具與鎖檔 ===
 .pids
 *.pid
 *.pid.lock
@@ -54,13 +62,3 @@ lib-cov/
 .lock-wscript
 .eslintcache
 .node_repl_history
-debug_test.py
-run_debug.py
-debug/
-list.json
-captcha_usage.txt
-test_redeem.py
-env.json
-output.json
-output_multi.json
-debug_local/
