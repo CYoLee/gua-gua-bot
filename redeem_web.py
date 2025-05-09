@@ -12,6 +12,7 @@ import contextlib
 import sys
 import logging
 import aiohttp
+import threading
 
 from io import BytesIO
 from flask import Flask, request, jsonify
@@ -71,23 +72,33 @@ RETRY_KEYWORDS = ["驗證碼錯誤", "驗證碼已過期", "伺服器繁忙", "�
 REDEEM_RETRIES = 3
 # === 主流程 ===
 
-async def run_redeem_with_retry(player_id, code, debug=False):  # 加 debug
+async def run_redeem_with_retry(player_id, code, debug=False):
     debug_logs = []
+
     for redeem_retry in range(REDEEM_RETRIES + 1):
-        result = await _redeem_once(player_id, code, debug_logs, redeem_retry, debug=debug)  # 傳入 debug
-        if not result:
-            result = {"success": False, "reason": "無回應", "debug_logs": debug_logs}
-        if result.get("reason", "").startswith("_try"):
-            # 若 OCR fallback 都失敗，直接放棄，不再 retry
+        result = await _redeem_once(player_id, code, debug_logs, redeem_retry, debug=debug)
+
+        if result is None or not isinstance(result, dict):
+            logger.error(f"[{player_id}] 第 {redeem_retry + 1} 次：_redeem_once 回傳 None 或格式錯誤 → {result}")
+            return {
+                "success": False,
+                "reason": "無效回傳（None 或錯誤格式）",
+                "player_id": player_id,
+                "debug_logs": debug_logs
+            }
+
+        # ✅ 防止 NoneType 的 reason
+        reason = result.get("reason") or ""
+
+        if reason.startswith("_try"):
             return result
+
         if result.get("success"):
             return result
-        reason = result.get("reason", "")
-        
-        # 若是登入問題，不應 retry
+
         if "登入失敗" in reason or "請先登入" in reason:
             return result
-        
+
         if any(k in reason for k in RETRY_KEYWORDS):
             debug_logs.append({
                 "retry": redeem_retry + 1,
@@ -96,8 +107,8 @@ async def run_redeem_with_retry(player_id, code, debug=False):  # 加 debug
             await asyncio.sleep(2 + redeem_retry)
         else:
             return result
-    return result
 
+    return result
 
 async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
     browser = None
@@ -122,7 +133,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                 log_entry(0, error_modal=modal_text)
                 if any(k in modal_text for k in ["請先輸入", "不存在", "錯誤", "無效", "伺服器繁忙"]):
                     logger.info(f"[{player_id}] 登入失敗：{modal_text}")
-                    return await _package_result(page, False, f"登入失敗：{modal_text}", player_id, debug_logs)
+                    return await _package_result(page, False, f"登入失敗：{modal_text}", player_id, debug_logs, debug=debug)
             except TimeoutError:
                 try:
                     await page.wait_for_selector(".name", timeout=5000)
@@ -130,7 +141,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                     if debug:
                         html = await page.content()
                         img = await page.screenshot()
-                        return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs, html, img)
+                        return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs, debug=debug)
                     return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs)
 
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
@@ -164,11 +175,11 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                                         await page.wait_for_timeout(500)
 
                                     if "驗證碼錯誤" in message or "驗證碼已過期" in message:
-                                        await _refresh_captcha(page)
+                                        await _refresh_captcha(page, player_id=player_id)
                                         break
 
                                     if any(k in message for k in FAILURE_KEYWORDS):
-                                        return await _package_result(page, False, message, player_id, debug_logs)
+                                        return await _package_result(page, False, message, player_id, debug_logs, debug=debug)
 
                                     if "成功" in message:
                                         return await _package_result(page, True, message, player_id, debug_logs, debug=debug)
@@ -179,18 +190,18 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 
                         else:
                             log_entry(attempt, server_message="未出現 modal 回應（點擊被遮蔽或失敗）")
-                            await _refresh_captcha(page)
+                            await _refresh_captcha(page, player_id=player_id)
                             continue
 
                     except Exception as e:
                         log_entry(attempt, error=f"點擊或等待 modal 時失敗: {str(e)}")
-                        await _refresh_captcha(page)
+                        await _refresh_captcha(page, player_id=player_id)
                         await page.wait_for_timeout(1000)
                         continue
 
                 except Exception:
                     log_entry(attempt, error=traceback.format_exc())
-                    await _refresh_captcha(page)
+                    await _refresh_captcha(page, player_id=player_id)
                     await page.wait_for_timeout(1000)
 
             log_entry(attempt, info="驗證碼三次辨識皆失敗，放棄兌換")
@@ -205,13 +216,25 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                 img = await page.screenshot() if 'page' in locals() else None
             except:
                 pass
-        return {"player_id": player_id, "success": False, "reason": "例外錯誤", "debug_logs": debug_logs,
-                "debug_html_base64": base64.b64encode(html.encode("utf-8")).decode() if html else None,
-                "debug_img_base64": base64.b64encode(img).decode() if img else None}
+        return {
+            "player_id": player_id,
+            "success": False,
+            "reason": "例外錯誤",
+            "debug_logs": debug_logs,
+            "debug_html_base64": base64.b64encode(html.encode("utf-8")).decode() if html else None,
+            "debug_img_base64": base64.b64encode(img).decode() if img else None
+        }
 
     finally:
         if browser:
             await browser.close()
+
+    return {
+        "player_id": player_id,
+        "success": False,
+        "reason": "未知錯誤（流程未命中任何 return）",
+        "debug_logs": debug_logs
+    }
 
 async def _solve_captcha(page, attempt, player_id):
     fallback_text = f"_try{attempt}"
@@ -226,8 +249,10 @@ async def _solve_captcha(page, attempt, player_id):
         await page.wait_for_timeout(500)
         captcha_bytes = await captcha_img.screenshot()
 
-        if not captcha_bytes or len(captcha_bytes) < 1024:
-            logger.info(f"[{player_id}] 第 {attempt} 次：圖片資料不足，長度={len(captcha_bytes) if captcha_bytes else 0}")
+        # ✅ 圖片過小則自動刷新，避免 2Captcha 拒收
+        if not captcha_bytes or len(captcha_bytes) < 100:
+            logger.warning(f"[{player_id}] 第 {attempt} 次：驗證碼圖太小（{len(captcha_bytes) if captcha_bytes else 0} bytes），自動刷新")
+            await _refresh_captcha(page, player_id=player_id)
             return fallback_text, method_used
 
         # 強化圖片 → base64 編碼
@@ -323,21 +348,43 @@ async def solve_with_2captcha(b64_img):
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post("http://2captcha.com/in.php", data=payload) as resp:
-            res = await resp.json()
-            if res.get("status") != 1:
-                return None
-            request_id = res["request"]
+        try:
+            async with session.post("http://2captcha.com/in.php", data=payload) as resp:
+                if resp.content_type != "application/json":
+                    text = await resp.text()
+                    logger.error(f"2Captcha 提交回傳非 JSON（{resp.status}）：{text}")
+                    return None
 
-        # 等待結果
+                res = await resp.json()
+                if res.get("status") != 1:
+                    logger.warning(f"2Captcha 提交失敗：{res}")
+                    return None
+
+                request_id = res["request"]
+        except Exception as e:
+            logger.exception(f"提交 2Captcha 發生錯誤：{e}")
+            return None
+
+        # 等待辨識結果
         for _ in range(20):
             await asyncio.sleep(5)
-            async with session.get(f"http://2captcha.com/res.php?key={api_key}&action=get&id={request_id}&json=1") as resp:
-                result = await resp.json()
-                if result.get("status") == 1:
-                    return result.get("request")
-                if result.get("request") != "CAPCHA_NOT_READY":
-                    return None
+            try:
+                async with session.get(f"http://2captcha.com/res.php?key={api_key}&action=get&id={request_id}&json=1") as resp:
+                    if resp.content_type != "application/json":
+                        text = await resp.text()
+                        logger.error(f"2Captcha 查詢回傳非 JSON（{resp.status}）：{text}")
+                        return None
+
+                    result = await resp.json()
+                    if result.get("status") == 1:
+                        return result.get("request")
+                    if result.get("request") != "CAPCHA_NOT_READY":
+                        logger.warning(f"2Captcha 回傳錯誤結果：{result}")
+                        return None
+            except Exception as e:
+                logger.exception(f"查詢 2Captcha 結果發生錯誤：{e}")
+                return None
+
     return None
 
 async def _refresh_captcha(page, player_id=None):
@@ -505,7 +552,7 @@ def redeem_submit():
     if not isinstance(player_ids, list):
         return jsonify({"success": False, "reason": "player_ids 必須是列表"}), 400
 
-    MAX_BATCH_SIZE = 1
+    MAX_BATCH_SIZE = 5
 
     async def process_all():
         all_success = []
@@ -515,10 +562,14 @@ def redeem_submit():
             batch = player_ids[i:i + MAX_BATCH_SIZE]
             tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
             results = await asyncio.gather(*tasks)
+            final_failed_ids = []
 
             for r in results:
                 if r.get("success"):
-                    all_success.append({"player_id": r["player_id"], "message": r.get("message")})
+                    all_success.append({
+                        "player_id": r["player_id"],
+                        "message": r.get("message")
+                    })
                 else:
                     all_fail.append({
                         "player_id": r.get("player_id"),
@@ -527,17 +578,37 @@ def redeem_submit():
                         "debug_img_base64": r.get("debug_img_base64", None),
                         "debug_html_base64": r.get("debug_html_base64", None)
                     })
+                    # 判斷是否是驗證碼三次都錯
+                    if "驗證碼三次辨識皆失敗" in (r.get("reason") or ""):
+                        final_failed_ids.append(r.get("player_id"))
 
-        return {
-            "success": all_success,
-            "fails": all_fail,
-            "message": f"兌換完成，共成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆"
-        }
+        # webhook 訊息內容組合
+        webhook_message = (
+            f"🎁 處理完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
+            f"禮包碼：{code}\n"
+        )
+        if final_failed_ids:
+            webhook_message += "⚠️ 三次辨識失敗的 ID（請改用單人兌換）：\n" + "\n".join(final_failed_ids)
+        else:
+            webhook_message += "✅ 無任何 ID 出現三次辨識失敗"
 
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    result = asyncio.run(process_all())
+        # 發送 Discord webhook
+        if os.getenv("DISCORD_WEBHOOK_URL"):
+            try:
+                requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
+                    "content": webhook_message
+                })
+            except Exception as e:
+                logger.warning(f"Webhook 發送失敗：{e}")
 
-    return jsonify(result)
+    def run_in_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process_all())
+
+    threading.Thread(target=run_in_thread).start()
+
+    return jsonify({"message": "兌換已開始處理，稍後將回報結果"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
