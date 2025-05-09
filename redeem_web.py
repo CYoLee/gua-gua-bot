@@ -11,7 +11,9 @@ import time
 import contextlib
 import sys
 import logging
+import aiohttp
 
+from io import BytesIO
 from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright, TimeoutError
 from dotenv import load_dotenv
@@ -228,8 +230,11 @@ async def _solve_captcha(page, attempt, player_id):
             logger.info(f"[{player_id}] 第 {attempt} 次：圖片資料不足，長度={len(captcha_bytes) if captcha_bytes else 0}")
             return fallback_text, method_used
 
+        # 強化圖片 → base64 編碼
+        b64_img = preprocess_image_for_2captcha(captcha_bytes)
+
         logger.info(f"[{player_id}] 第 {attempt} 次：使用 2Captcha 辨識")
-        result = solve_with_2captcha(captcha_bytes)
+        result = await solve_with_2captcha(b64_img)
 
         if result:
             method_used = "2captcha"
@@ -240,8 +245,18 @@ async def _solve_captcha(page, attempt, player_id):
             return fallback_text, method_used
 
     except Exception as e:
-        logger.info(f"[{player_id}] 第 {attempt} 次：例外錯誤：{str(e)}")
+        logger.exception(f"[{player_id}] 第 {attempt} 次：例外錯誤：{e}")
         return fallback_text, method_used
+
+def preprocess_image_for_2captcha(img_bytes, scale=2.5):
+    """轉灰階、二值化、放大並轉 base64 編碼"""
+    img = Image.open(BytesIO(img_bytes)).convert("L")  # 灰階
+    img = img.point(lambda x: 0 if x < 140 else 255, '1')  # 二值化
+    new_size = (int(img.width * scale), int(img.height * scale))
+    img = img.resize(new_size, Image.LANCZOS)
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 def _clean_ocr_text(text):
     """替換常見誤判字元並移除非字母數字"""
@@ -294,29 +309,35 @@ def check_captcha_limit():
             f.write(f"{today},1")
         return True
 
-def solve_with_2captcha(image_bytes):
-    if not CAPTCHA_API_KEY or not check_captcha_limit():
-        return None
-
-    base64_img = base64.b64encode(image_bytes).decode("utf-8")
-    resp = requests.post("http://2captcha.com/in.php", data={
-        "key": CAPTCHA_API_KEY,
+async def solve_with_2captcha(b64_img):
+    api_key = os.getenv("CAPTCHA_API_KEY")
+    payload = {
+        "key": api_key,
         "method": "base64",
-        "body": base64_img,
-        "json": 1
-    }).json()
+        "body": b64_img,
+        "json": 1,
+        "numeric": 0,
+        "min_len": 4,
+        "max_len": 5,
+        "language": 2
+    }
 
-    if resp.get("status") != 1:
-        return None
+    async with aiohttp.ClientSession() as session:
+        async with session.post("http://2captcha.com/in.php", data=payload) as resp:
+            res = await resp.json()
+            if res.get("status") != 1:
+                return None
+            request_id = res["request"]
 
-    captcha_id = resp.get("request")
-    for _ in range(3):  # 最多 retry 3 次
-        time.sleep(3)
-        result = requests.get(f"http://2captcha.com/res.php?key={CAPTCHA_API_KEY}&action=get&id={captcha_id}&json=1").json()
-        if result.get("status") == 1:
-            return result.get("request")
-        elif result.get("request") != "CAPCHA_NOT_READY":
-            return None
+        # 等待結果
+        for _ in range(20):
+            await asyncio.sleep(5)
+            async with session.get(f"http://2captcha.com/res.php?key={api_key}&action=get&id={request_id}&json=1") as resp:
+                result = await resp.json()
+                if result.get("status") == 1:
+                    return result.get("request")
+                if result.get("request") != "CAPCHA_NOT_READY":
+                    return None
     return None
 
 async def _refresh_captcha(page, player_id=None):
@@ -327,13 +348,24 @@ async def _refresh_captcha(page, player_id=None):
             logger.info(f"[{player_id}] 無法定位驗證碼圖片或刷新按鈕")
             return
 
+        # 先確保 modal 已經關閉
+        for _ in range(10):
+            modal = await page.query_selector('.message_modal')
+            if not modal:
+                break
+            confirm_btn = await modal.query_selector('.confirm_btn')
+            if confirm_btn and await confirm_btn.is_visible():
+                await confirm_btn.click()
+            await page.wait_for_timeout(300)
+
         original_bytes = await captcha_img.screenshot()
         original_hash = hashlib.md5(original_bytes).hexdigest() if original_bytes else ""
 
+        # 點擊刷新按鈕
         await refresh_btn.click()
-        await page.wait_for_timeout(1200)
+        await page.wait_for_timeout(1500)
 
-        # 處理 modal
+        # 處理 modal（如果彈出錯誤訊息）
         for _ in range(8):
             modal = await page.query_selector('.message_modal')
             if modal:
