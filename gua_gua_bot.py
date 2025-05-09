@@ -212,9 +212,14 @@ async def handle_redeem_flow(interaction: discord.Interaction, code: str, player
     guild_id = str(interaction.guild_id)
     user = interaction.user
     try:
-        player_ids = [player_id] if player_id else [
-            doc.id async for doc in db.collection("ids").document(guild_id).collection("players").stream()
-        ]
+        # Firestore 的 .stream() 是同步的，不可 async for
+        if player_id:
+            player_ids = [player_id]
+        else:
+            docs = await asyncio.to_thread(
+                lambda: list(db.collection("ids").document(guild_id).collection("players").stream())
+            )
+            player_ids = [doc.id for doc in docs]
 
         api_url = f"{REDEEM_API_URL.rstrip('/')}/redeem_submit"
         headers = {"Content-Type": "application/json"}
