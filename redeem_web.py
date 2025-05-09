@@ -112,29 +112,23 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
             page = await context.new_page()
             await page.goto("https://wos-giftcode.centurygame.com/", timeout=PAGE_LOAD_TIMEOUT)
             await page.fill('input[type="text"]', player_id)
-            await page.click(".login_btn")  # 必須補上，否則永遠不會登入
-            # 嘗試抓錯誤 modal
+            await page.click(".login_btn")
+
             try:
                 await page.wait_for_selector(".message_modal", timeout=5000)
                 modal_text = await page.inner_text(".message_modal .msg")
                 log_entry(0, error_modal=modal_text)
                 if any(k in modal_text for k in ["請先輸入", "不存在", "錯誤", "無效", "伺服器繁忙"]):
+                    logger.info(f"[{player_id}] 登入失敗：{modal_text}")
                     return await _package_result(page, False, f"登入失敗：{modal_text}", player_id, debug_logs)
             except TimeoutError:
-                # 沒出錯誤 modal，再嘗試抓 .name
                 try:
                     await page.wait_for_selector(".name", timeout=5000)
                 except TimeoutError:
                     if debug:
-                        date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
-                        ts = datetime.now().strftime("%H%M%S")
-                        os.makedirs(date_folder, exist_ok=True)
                         html = await page.content()
-                        screenshot = await page.screenshot()
-                        with open(f"{date_folder}/debug_login_fail_{player_id}_{ts}.html", "w", encoding="utf-8") as f:
-                            f.write(html)
-                        with open(f"{date_folder}/debug_login_fail_{player_id}_{ts}.png", "wb") as f:
-                            f.write(screenshot)
+                        img = await page.screenshot()
+                        return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs, html, img)
                     return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs)
 
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
@@ -143,6 +137,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                 try:
                     captcha_text, method_used = await _solve_captcha(page, attempt, player_id)
                     log_entry(attempt, captcha_text=captcha_text, method=method_used)
+
                     if not captcha_text or len(captcha_text.strip()) < 4:
                         log_entry(attempt, info=f"辨識過短（長度={len(captcha_text.strip())}），強制送出")
 
@@ -159,6 +154,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                                 if msg_el:
                                     message = await msg_el.inner_text()
                                     log_entry(attempt, server_message=message)
+                                    logger.info(f"[{player_id}] 第 {attempt} 次：伺服器回應：{message}")
 
                                     confirm_btn = await modal.query_selector(".confirm_btn")
                                     if confirm_btn and await confirm_btn.is_visible():
@@ -196,25 +192,20 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                     await page.wait_for_timeout(1000)
 
             log_entry(attempt, info="驗證碼三次辨識皆失敗，放棄兌換")
+            logger.info(f"[{player_id}] 最終失敗：驗證碼三次辨識皆失敗")
             return await _package_result(page, False, "驗證碼三次辨識皆失敗，放棄兌換", player_id, debug_logs, debug=debug)
 
     except Exception:
+        html, img = None, None
         if debug:
             try:
-                date_folder = f"debug/{datetime.now().strftime('%Y%m%d')}"
-                ts = datetime.now().strftime("%H%M%S")
-                os.makedirs(date_folder, exist_ok=True)
                 html = await page.content() if 'page' in locals() else "<no page>"
-                screenshot = await page.screenshot() if 'page' in locals() else None
-                with open(f"{date_folder}/debug_exception_{player_id}_{ts}.html", "w", encoding="utf-8") as f:
-                    f.write(html)
-                if screenshot:
-                    with open(f"{date_folder}/debug_exception_{player_id}_{ts}.png", "wb") as f:
-                        f.write(screenshot)
+                img = await page.screenshot() if 'page' in locals() else None
             except:
                 pass
-
-        return {"player_id": player_id, "success": False, "reason": "例外錯誤", "debug_logs": debug_logs}
+        return {"player_id": player_id, "success": False, "reason": "例外錯誤", "debug_logs": debug_logs,
+                "debug_html_base64": base64.b64encode(html.encode("utf-8")).decode() if html else None,
+                "debug_img_base64": base64.b64encode(img).decode() if img else None}
 
     finally:
         if browser:
@@ -227,29 +218,29 @@ async def _solve_captcha(page, attempt, player_id):
     try:
         captcha_img = await page.query_selector(".verify_pic")
         if not captcha_img:
-            logger.info(f"[Captcha] 第 {attempt} 次：未找到驗證碼圖片")
+            logger.info(f"[{player_id}] 第 {attempt} 次：未找到驗證碼圖片")
             return fallback_text, method_used
 
         await page.wait_for_timeout(500)
         captcha_bytes = await captcha_img.screenshot()
 
         if not captcha_bytes or len(captcha_bytes) < 1024:
-            logger.info(f"[Captcha] 第 {attempt} 次：圖片資料不足，長度={len(captcha_bytes) if captcha_bytes else 0}")
+            logger.info(f"[{player_id}] 第 {attempt} 次：圖片資料不足，長度={len(captcha_bytes) if captcha_bytes else 0}")
             return fallback_text, method_used
 
-        logger.info(f"[Captcha] 使用 2Captcha 辨識（第 {attempt} 次）")
+        logger.info(f"[{player_id}] 第 {attempt} 次：使用 2Captcha 辨識")
         result = solve_with_2captcha(captcha_bytes)
 
         if result:
             method_used = "2captcha"
-            logger.info(f"[Captcha] 第 {attempt} 次：2Captcha 成功辨識 → {result}")
+            logger.info(f"[{player_id}] 第 {attempt} 次：2Captcha 成功辨識 → {result}")
             return result, method_used
         else:
-            logger.info(f"[Captcha] 第 {attempt} 次：2Captcha 辨識失敗，回傳 None")
+            logger.info(f"[{player_id}] 第 {attempt} 次：2Captcha 辨識失敗，回傳 None")
             return fallback_text, method_used
 
     except Exception as e:
-        logger.info(f"[Captcha] 第 {attempt} 次：例外錯誤：{str(e)}")
+        logger.info(f"[{player_id}] 第 {attempt} 次：例外錯誤：{str(e)}")
         return fallback_text, method_used
 
 def _clean_ocr_text(text):
@@ -328,31 +319,28 @@ def solve_with_2captcha(image_bytes):
             return None
     return None
 
-async def _refresh_captcha(page):
+async def _refresh_captcha(page, player_id=None):
     try:
         refresh_btn = await page.query_selector('.reload_btn')
         captcha_img = await page.query_selector('.verify_pic')
         if not refresh_btn or not captcha_img:
-            if DEBUG_MODE:
-                logger.info("[Captcha] 無法定位驗證碼圖片或刷新按鈕")
+            logger.info(f"[{player_id}] 無法定位驗證碼圖片或刷新按鈕")
             return
 
-        # 儲存原圖 base64 hash（更準確判斷圖片是否變更）
         original_bytes = await captcha_img.screenshot()
         original_hash = hashlib.md5(original_bytes).hexdigest() if original_bytes else ""
 
         await refresh_btn.click()
         await page.wait_for_timeout(1200)
 
-        # 若 modal 跳出，先處理掉
+        # 處理 modal
         for _ in range(8):
             modal = await page.query_selector('.message_modal')
             if modal:
                 msg_el = await modal.query_selector('p.msg')
                 if msg_el:
                     msg_text = await msg_el.inner_text()
-                    if DEBUG_MODE:
-                        logger.info(f"[Captcha Modal] 訊息出現：{msg_text.strip()}")
+                    logger.info(f"[{player_id}] Captcha Modal：{msg_text.strip()}")
                     if any(k in msg_text for k in ["過於頻繁", "伺服器繁忙", "請稍後再試"]):
                         confirm_btn = await modal.query_selector('.confirm_btn')
                         if confirm_btn:
@@ -361,10 +349,9 @@ async def _refresh_captcha(page):
                         return
             await page.wait_for_timeout(300)
 
-        # 嘗試最多 30 次判斷圖是否真的更新（比較圖片 hash + bounding box）
+        # 等待圖刷新
         for i in range(30):
             await page.wait_for_timeout(150)
-
             new_bytes = await captcha_img.screenshot()
             if not new_bytes or len(new_bytes) < 1024:
                 continue
@@ -372,46 +359,35 @@ async def _refresh_captcha(page):
             if new_hash != original_hash:
                 box = await captcha_img.bounding_box()
                 if box and box["height"] > 10:
-                    if DEBUG_MODE:
-                        logger.info(f"[Captcha] 成功刷新 (hash 比對不同，第 {i+1} 次)")
+                    logger.info(f"[{player_id}] 成功刷新驗證碼 (hash 第 {i+1} 次變化)")
                     return
         else:
-            if DEBUG_MODE:
-                logger.info("[Captcha] 刷新失敗：圖片內容或位置未更新")
+            logger.info(f"[{player_id}] 刷新失敗：圖片內容未更新")
 
     except Exception as e:
-        if DEBUG_MODE:
-            logger.info(f"[Captcha Refresh Error] {str(e)}")
+        logger.info(f"[{player_id}] Captcha 刷新例外：{str(e)}")
 
 async def _package_result(page, success, message, player_id, debug_logs, debug=False):
-    try:
-        result = {
-            "player_id": player_id,
-            "success": success,
-            "reason": message if not success else None,
-            "message": message if success else None,
-            "debug_logs": debug_logs
-        }
+    result = {
+        "player_id": player_id,
+        "success": success,
+        "reason": message if not success else None,
+        "message": message if success else None,
+        "debug_logs": debug_logs
+    }
 
-        if debug and page:
-            try:
-                html = await page.content()
-                screenshot = await page.screenshot()
-                result["debug_html_base64"] = base64.b64encode(html.encode("utf-8")).decode("utf-8")
-                result["debug_img_base64"] = base64.b64encode(screenshot).decode("utf-8")
-            except Exception as e:
-                result["debug_html_base64"] = None
-                result["debug_img_base64"] = None
-                debug_logs.append({"error": f"無法擷取 debug 畫面: {str(e)}"})
-        return result
+    if debug and page:
+        try:
+            html = await page.content()
+            screenshot = await page.screenshot()
+            result["debug_html_base64"] = base64.b64encode(html.encode("utf-8")).decode("utf-8")
+            result["debug_img_base64"] = base64.b64encode(screenshot).decode("utf-8")
+        except Exception as e:
+            result["debug_html_base64"] = None
+            result["debug_img_base64"] = None
+            debug_logs.append({"error": f"[{player_id}] 無法擷取 debug 畫面: {str(e)}"})
+    return result
 
-    except Exception:
-        return {
-            "player_id": player_id,
-            "success": success,
-            "reason": message,
-            "debug_logs": debug_logs
-        }
 # === Flask API ===
 @app.route("/add_id", methods=["POST"])
 def add_id():

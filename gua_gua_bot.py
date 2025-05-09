@@ -266,7 +266,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         success_count = len(all_success)
         fail_count = len(all_fail)
         msg = f"🎁 禮包碼 `{code}` 提交完成\n✅ 成功：{success_count} 筆\n❌ 失敗：{fail_count} 筆"
-        msg += "\n📦 詳細錯誤請查看後端 Logs（Railway Deploy logs）"
+        msg += "\n📦 詳細錯誤請查看後端 Logs"
         await interaction.followup.send(content=msg, ephemeral=True)
 
     except Exception as e:
