@@ -203,75 +203,56 @@ async def list_ids(interaction: discord.Interaction):
 
 # === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
-@app_commands.describe(
-    code="要兌換的禮包碼",
-    player_id="選填：指定兌換的玩家 ID（單人兌換）"
-)
+@app_commands.describe(code="要兌換的禮包碼", player_id="選填：指定兌換的玩家 ID（單人兌換）")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
-    await interaction.response.defer(thinking=True)
+    await interaction.response.send_message("🎁 兌換已開始處理，稍後將回報結果", ephemeral=True)
+    asyncio.create_task(handle_redeem_flow(interaction, code, player_id))
 
-    # 決定要兌換的 player_ids
+async def handle_redeem_flow(interaction: discord.Interaction, code: str, player_id: str = None):
+    guild_id = str(interaction.guild_id)
+    user = interaction.user
     try:
-        if player_id:
-            if not re.match(r'^\d{9}$', player_id):
-                await interaction.followup.send("❌ 請輸入正確的 9 位數 ID。", ephemeral=True)
-                return
-            player_ids = [player_id]
-        else:
-            docs = db.collection("ids").document(str(interaction.guild_id)).collection("players").stream()
-            player_ids = [doc.id for doc in docs]
-            if not player_ids:
-                await interaction.followup.send("❌ 沒有找到任何 ID。請先用 `/add_id` 新增。", ephemeral=True)
-                return
-    except Exception as e:
-        await interaction.followup.send(f"⚠️ 讀取資料庫錯誤：{str(e)}", ephemeral=True)
-        return
+        player_ids = [player_id] if player_id else [
+            doc.id async for doc in db.collection("ids").document(guild_id).collection("players").stream()
+        ]
 
-    # 呼叫後端 API（每批最多 5 筆）
-    try:
-        api_url = os.getenv("REDEEM_API_URL", "").rstrip("/") + "/redeem_submit"
+        api_url = f"{REDEEM_API_URL.rstrip('/')}/redeem_submit"
         headers = {"Content-Type": "application/json"}
         MAX_BATCH = 5
 
         all_success = []
         all_fail = []
 
-        async with aiohttp.ClientSession() as session:  # ✅ 建議 1：只建立一次 session
+        async with aiohttp.ClientSession() as session:
             for i in range(0, len(player_ids), MAX_BATCH):
                 batch = player_ids[i:i + MAX_BATCH]
-                payload = {
-                    "code": code,
-                    "player_ids": batch,
-                    "debug": False
-                }
-
+                payload = {"code": code, "player_ids": batch, "debug": False}
                 try:
-                    async with session.post(api_url, headers=headers, json=payload, timeout=180) as response:
-                        if response.status != 200:
-                            all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{response.status}）"} for pid in batch])
+                    async with session.post(api_url, headers=headers, json=payload, timeout=180) as resp:
+                        if resp.status != 200:
+                            all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{resp.status}）"} for pid in batch])
                             continue
-
-                        result = await response.json()
+                        result = await resp.json()
                         all_success.extend(result.get("success", []))
                         all_fail.extend(result.get("fails", []))
-
-                except asyncio.TimeoutError:  # ✅ 建議 2：補上 timeout 錯誤
+                except asyncio.TimeoutError:
+                    logger.warning(f"[Timeout] Redeem API timeout for batch: {batch}")
                     all_fail.extend([{"player_id": pid, "reason": "API 呼叫逾時（Timeout）"} for pid in batch])
                 except Exception as e:
+                    logger.exception(f"[Exception] 呼叫 Redeem API 發生錯誤 (batch: {batch})")
                     all_fail.extend([{"player_id": pid, "reason": f"API 呼叫失敗：{e}"} for pid in batch])
 
-                await asyncio.sleep(1)  # 每批延遲 1 秒
+                await asyncio.sleep(1)
 
-        # 結果統計
-        success_count = len(all_success)
-        fail_count = len(all_fail)
-        msg = f"🎁 禮包碼 `{code}` 提交完成\n✅ 成功：{success_count} 筆\n❌ 失敗：{fail_count} 筆"
-        msg += "\n📦 詳細錯誤請查看後端 Logs"
-        await interaction.followup.send(content=msg, ephemeral=True)
+        summary = (
+            f"🎁 禮包碼 `{code}` 處理完成\n"
+            f"✅ 成功：{len(all_success)} 筆\n❌ 失敗：{len(all_fail)} 筆"
+        )
+        await interaction.followup.send(content=summary, ephemeral=True)
 
     except Exception as e:
-        await interaction.followup.send(f"❌ 呼叫後端 API 總體失敗：{str(e)}", ephemeral=True)
-
+        logger.exception(f"[Critical Error] 處理兌換流程時發生錯誤（guild_id: {guild_id}）")
+        await interaction.followup.send(f"❌ 兌換處理過程發生錯誤：{str(e)}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
