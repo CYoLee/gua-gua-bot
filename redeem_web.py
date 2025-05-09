@@ -10,6 +10,7 @@ import requests
 import time
 import contextlib
 import sys
+import logging
 
 from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright, TimeoutError
@@ -26,6 +27,9 @@ import pytesseract
 import nest_asyncio
 from datetime import datetime
 import easyocr
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 @contextlib.contextmanager
 def suppress_stdout():
@@ -222,29 +226,29 @@ async def _solve_captcha(page, attempt, player_id):
     try:
         captcha_img = await page.query_selector(".verify_pic")
         if not captcha_img:
-            print(f"[Captcha] 第 {attempt} 次：未找到驗證碼圖片")
+            logger.info(f"[Captcha] 第 {attempt} 次：未找到驗證碼圖片")
             return fallback_text, method_used
 
         await page.wait_for_timeout(500)
         captcha_bytes = await captcha_img.screenshot()
 
         if not captcha_bytes or len(captcha_bytes) < 1024:
-            print(f"[Captcha] 第 {attempt} 次：圖片資料不足，長度={len(captcha_bytes) if captcha_bytes else 0}")
+            logger.info(f"[Captcha] 第 {attempt} 次：圖片資料不足，長度={len(captcha_bytes) if captcha_bytes else 0}")
             return fallback_text, method_used
 
-        print(f"[Captcha] 使用 2Captcha 辨識（第 {attempt} 次）")
+        logger.info(f"[Captcha] 使用 2Captcha 辨識（第 {attempt} 次）")
         result = solve_with_2captcha(captcha_bytes)
 
         if result:
             method_used = "2captcha"
-            print(f"[Captcha] 第 {attempt} 次：2Captcha 成功辨識 → {result}")
+            logger.info(f"[Captcha] 第 {attempt} 次：2Captcha 成功辨識 → {result}")
             return result, method_used
         else:
-            print(f"[Captcha] 第 {attempt} 次：2Captcha 辨識失敗，回傳 None")
+            logger.info(f"[Captcha] 第 {attempt} 次：2Captcha 辨識失敗，回傳 None")
             return fallback_text, method_used
 
     except Exception as e:
-        print(f"[Captcha] 第 {attempt} 次：例外錯誤：{str(e)}")
+        logger.info(f"[Captcha] 第 {attempt} 次：例外錯誤：{str(e)}")
         return fallback_text, method_used
 
 def _clean_ocr_text(text):
@@ -329,7 +333,7 @@ async def _refresh_captcha(page):
         captcha_img = await page.query_selector('.verify_pic')
         if not refresh_btn or not captcha_img:
             if DEBUG_MODE:
-                print("[Captcha] 無法定位驗證碼圖片或刷新按鈕")
+                logger.info("[Captcha] 無法定位驗證碼圖片或刷新按鈕")
             return
 
         # 儲存原圖 base64 hash（更準確判斷圖片是否變更）
@@ -347,7 +351,7 @@ async def _refresh_captcha(page):
                 if msg_el:
                     msg_text = await msg_el.inner_text()
                     if DEBUG_MODE:
-                        print(f"[Captcha Modal] 訊息出現：{msg_text.strip()}")
+                        logger.info(f"[Captcha Modal] 訊息出現：{msg_text.strip()}")
                     if any(k in msg_text for k in ["過於頻繁", "伺服器繁忙", "請稍後再試"]):
                         confirm_btn = await modal.query_selector('.confirm_btn')
                         if confirm_btn:
@@ -368,15 +372,15 @@ async def _refresh_captcha(page):
                 box = await captcha_img.bounding_box()
                 if box and box["height"] > 10:
                     if DEBUG_MODE:
-                        print(f"[Captcha] 成功刷新 (hash 比對不同，第 {i+1} 次)")
+                        logger.info(f"[Captcha] 成功刷新 (hash 比對不同，第 {i+1} 次)")
                     return
         else:
             if DEBUG_MODE:
-                print("[Captcha] 刷新失敗：圖片內容或位置未更新")
+                logger.info("[Captcha] 刷新失敗：圖片內容或位置未更新")
 
     except Exception as e:
         if DEBUG_MODE:
-            print(f"[Captcha Refresh Error] {str(e)}")
+            logger.info(f"[Captcha Refresh Error] {str(e)}")
 
 async def _package_result(page, success, message, player_id, debug_logs, debug=False):
     try:

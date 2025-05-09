@@ -190,7 +190,6 @@ async def list_ids(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
 
 # === Redeem 兌換 ===
-# === Redeem 兌換 ===
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
 @app_commands.describe(
     code="要兌換的禮包碼",
@@ -216,7 +215,7 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         await interaction.followup.send(f"⚠️ 讀取資料庫錯誤：{str(e)}", ephemeral=True)
         return
 
-    # 呼叫後端 API（改為分批送出，每批最多 5 筆）
+    # 呼叫後端 API（每批最多 5 筆）
     try:
         api_url = os.getenv("REDEEM_API_URL", "").rstrip("/") + "/redeem_submit"
         headers = {"Content-Type": "application/json"}
@@ -225,16 +224,16 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
         all_success = []
         all_fail = []
 
-        for i in range(0, len(player_ids), MAX_BATCH):
-            batch = player_ids[i:i + MAX_BATCH]
-            payload = {
-                "code": code,
-                "player_ids": batch,
-                "debug": False
-            }
+        async with aiohttp.ClientSession() as session:  # ✅ 建議 1：只建立一次 session
+            for i in range(0, len(player_ids), MAX_BATCH):
+                batch = player_ids[i:i + MAX_BATCH]
+                payload = {
+                    "code": code,
+                    "player_ids": batch,
+                    "debug": False
+                }
 
-            try:
-                async with aiohttp.ClientSession() as session:
+                try:
                     async with session.post(api_url, headers=headers, json=payload, timeout=180) as response:
                         if response.status != 200:
                             all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{response.status}）"} for pid in batch])
@@ -244,16 +243,19 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
                         all_success.extend(result.get("success", []))
                         all_fail.extend(result.get("fails", []))
 
-            except Exception as e:
-                all_fail.extend([{"player_id": pid, "reason": f"API 呼叫失敗：{e}"} for pid in batch])
-            await asyncio.sleep(1)  # 每批延遲 1 秒
+                except asyncio.TimeoutError:  # ✅ 建議 2：補上 timeout 錯誤
+                    all_fail.extend([{"player_id": pid, "reason": "API 呼叫逾時（Timeout）"} for pid in batch])
+                except Exception as e:
+                    all_fail.extend([{"player_id": pid, "reason": f"API 呼叫失敗：{e}"} for pid in batch])
+
+                await asyncio.sleep(1)  # 每批延遲 1 秒
 
         # 結果統計
         success_count = len(all_success)
         fail_count = len(all_fail)
         msg = f"🎁 禮包碼 `{code}` 提交完成\n✅ 成功：{success_count} 筆\n❌ 失敗：{fail_count} 筆"
         msg += "\n📦 詳細錯誤請查看後端 Logs（Railway Deploy logs）"
-        await interaction.followup.send(content=msg)
+        await interaction.followup.send(content=msg, ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"❌ 呼叫後端 API 總體失敗：{str(e)}", ephemeral=True)
