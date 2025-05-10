@@ -205,14 +205,13 @@ async def list_ids(interaction: discord.Interaction):
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
 @app_commands.describe(code="要兌換的禮包碼", player_id="選填：指定兌換的玩家 ID（單人兌換）")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
-    await handle_redeem_flow(interaction, code, player_id)
+    await interaction.response.send_message("🎁 兌換已開始處理，稍後將由系統回報結果", ephemeral=True)
+    asyncio.create_task(trigger_backend_redeem(interaction, code, player_id))
 
-async def handle_redeem_flow(interaction: discord.Interaction, code: str, player_id: str = None):
+async def trigger_backend_redeem(interaction: discord.Interaction, code: str, player_id: str = None):
     guild_id = str(interaction.guild_id)
-    user = interaction.user
-    try:
-        await interaction.response.defer(ephemeral=True)
 
+    try:
         if player_id:
             player_ids = [player_id]
         else:
@@ -227,42 +226,16 @@ async def handle_redeem_flow(interaction: discord.Interaction, code: str, player
 
         api_url = f"{REDEEM_API_URL.rstrip('/')}/redeem_submit"
         headers = {"Content-Type": "application/json"}
-        MAX_BATCH = 5
-
-        all_success = []
-        all_fail = []
+        payload = {"code": code, "player_ids": player_ids, "debug": False}
 
         async with aiohttp.ClientSession() as session:
-            for i in range(0, len(player_ids), MAX_BATCH):
-                batch = player_ids[i:i + MAX_BATCH]
-                payload = {"code": code, "player_ids": batch, "debug": False}
-                try:
-                    async with session.post(api_url, headers=headers, json=payload, timeout=180) as resp:
-                        if resp.status != 200:
-                            logger.warning(f"[{guild_id}] Batch {i // MAX_BATCH + 1}: Status {resp.status}")
-                            all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{resp.status}）"} for pid in batch])
-                            continue
-                        result = await resp.json()
-                        all_success.extend(result.get("success", []))
-                        all_fail.extend(result.get("fails", []))
-                except asyncio.TimeoutError:
-                    logger.warning(f"[Timeout] Batch {i // MAX_BATCH + 1} 超時，IDs: {batch}")
-                    all_fail.extend([{"player_id": pid, "reason": "API 呼叫逾時（Timeout）"} for pid in batch])
-                except Exception as e:
-                    logger.exception(f"[Exception] Batch {i // MAX_BATCH + 1} 發生錯誤，IDs: {batch}")
-                    all_fail.extend([{"player_id": pid, "reason": f"API 呼叫失敗：{e}"} for pid in batch])
+            async with session.post(api_url, headers=headers, json=payload, timeout=30) as resp:
+                if resp.status != 200:
+                    logger.warning(f"[{guild_id}] API 回應異常：{resp.status}")
+                    await interaction.followup.send(f"❌ 伺服器回應錯誤（{resp.status}）", ephemeral=True)
+                    return
 
-                await asyncio.sleep(1)
-
-        summary = (
-            f"🎁 禮包碼 `{code}` 處理完成\n"
-            f"✅ 成功：{len(all_success)} 筆\n❌ 失敗：{len(all_fail)} 筆"
-        )
-        await interaction.followup.send(content=summary, ephemeral=True)
-
-    except Exception as e:
-        logger.exception(f"[Critical Error] 處理兌換流程時發生錯誤（guild_id: {guild_id}）")
-        await interaction.followup.send(f"❌ 兌換處理過程發生錯誤：{str(e)}", ephemeral=True)
+                logger.info(f"[{guild_id}] 已觸發後端兌換流程，交由 webhook 回報"_]()
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
