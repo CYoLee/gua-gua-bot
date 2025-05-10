@@ -235,7 +235,7 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
                     await interaction.followup.send(f"❌ 伺服器回應錯誤（{resp.status}）", ephemeral=True)
                     return
 
-                logger.info(f"[{guild_id}] 已觸發後端兌換流程，交由 webhook 回報"_]()
+                logger.info(f"[{guild_id}] 已觸發後端兌換流程，交由 webhook 回報")
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
