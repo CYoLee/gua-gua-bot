@@ -10,3 +10,4 @@ playwright
 python-dotenv
 pytz
 requests
+Pillow
