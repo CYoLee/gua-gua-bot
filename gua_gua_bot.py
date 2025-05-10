@@ -205,14 +205,14 @@ async def list_ids(interaction: discord.Interaction):
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
 @app_commands.describe(code="要兌換的禮包碼", player_id="選填：指定兌換的玩家 ID（單人兌換）")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
-    await interaction.response.send_message("🎁 兌換已開始處理，稍後將回報結果", ephemeral=True)
-    asyncio.create_task(handle_redeem_flow(interaction, code, player_id))
+    await handle_redeem_flow(interaction, code, player_id)
 
 async def handle_redeem_flow(interaction: discord.Interaction, code: str, player_id: str = None):
     guild_id = str(interaction.guild_id)
     user = interaction.user
     try:
-        # Firestore 的 .stream() 是同步的，不可 async for
+        await interaction.response.defer(ephemeral=True)
+
         if player_id:
             player_ids = [player_id]
         else:
@@ -220,6 +220,10 @@ async def handle_redeem_flow(interaction: discord.Interaction, code: str, player
                 lambda: list(db.collection("ids").document(guild_id).collection("players").stream())
             )
             player_ids = [doc.id for doc in docs]
+
+        if not player_ids:
+            await interaction.followup.send("⚠️ 沒有找到任何可兌換的玩家 ID", ephemeral=True)
+            return
 
         api_url = f"{REDEEM_API_URL.rstrip('/')}/redeem_submit"
         headers = {"Content-Type": "application/json"}
@@ -235,16 +239,17 @@ async def handle_redeem_flow(interaction: discord.Interaction, code: str, player
                 try:
                     async with session.post(api_url, headers=headers, json=payload, timeout=180) as resp:
                         if resp.status != 200:
+                            logger.warning(f"[{guild_id}] Batch {i // MAX_BATCH + 1}: Status {resp.status}")
                             all_fail.extend([{"player_id": pid, "reason": f"API 回應異常（{resp.status}）"} for pid in batch])
                             continue
                         result = await resp.json()
                         all_success.extend(result.get("success", []))
                         all_fail.extend(result.get("fails", []))
                 except asyncio.TimeoutError:
-                    logger.warning(f"[Timeout] Redeem API timeout for batch: {batch}")
+                    logger.warning(f"[Timeout] Batch {i // MAX_BATCH + 1} 超時，IDs: {batch}")
                     all_fail.extend([{"player_id": pid, "reason": "API 呼叫逾時（Timeout）"} for pid in batch])
                 except Exception as e:
-                    logger.exception(f"[Exception] 呼叫 Redeem API 發生錯誤 (batch: {batch})")
+                    logger.exception(f"[Exception] Batch {i // MAX_BATCH + 1} 發生錯誤，IDs: {batch}")
                     all_fail.extend([{"player_id": pid, "reason": f"API 呼叫失敗：{e}"} for pid in batch])
 
                 await asyncio.sleep(1)
