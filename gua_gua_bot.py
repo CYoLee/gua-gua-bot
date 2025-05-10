@@ -20,6 +20,7 @@ from discord.ui import View, Button
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta
 from firebase_admin import credentials, firestore
+from aiohttp import ClientError, ClientTimeout
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -228,17 +229,16 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
         headers = {"Content-Type": "application/json"}
         payload = {"code": code, "player_ids": player_ids, "debug": False}
 
+        # ✅ 發送請求但不等待回應，不使用 async with
         async with aiohttp.ClientSession() as session:
-            async with session.post(api_url, headers=headers, json=payload, timeout=30) as resp:
-                if resp.status != 200:
-                    logger.warning(f"[{guild_id}] API 回應異常：{resp.status}")
-                    await interaction.followup.send(f"❌ 伺服器回應錯誤（{resp.status}）", ephemeral=True)
-                    return
+            try:
+                await session.post(api_url, headers=headers, json=payload, timeout=5)
+                logger.info(f"[{guild_id}] 觸發後端兌換流程（未等待完成）")
+            except (asyncio.TimeoutError, ClientError) as e:
+                logger.warning(f"[{guild_id}] 發送兌換請求失敗，但忽略錯誤（交由 webhook 回報）：{e}")
 
-                logger.info(f"[{guild_id}] 已觸發後端兌換流程，交由 webhook 回報")
     except Exception as e:
-            logger.exception(f"[Critical Error] 觸發後端兌換時發生錯誤（guild_id: {guild_id}）")
-            await interaction.followup.send(f"❌ 發送兌換請求失敗：{e}", ephemeral=True)
+        logger.exception(f"[Critical Error] trigger_backend_redeem 發生錯誤（guild_id: {guild_id}）")
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
