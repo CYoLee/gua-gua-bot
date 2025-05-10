@@ -559,18 +559,53 @@ def redeem_submit():
         return jsonify({"success": False, "reason": "player_ids 必須是列表"}), 400
 
     MAX_BATCH_SIZE = 5
-
     start_time = time.time()
+
     async def process_all():
         all_success = []
         all_fail = []
+        final_failed_ids = []
 
+        async def fetch_and_store_name(pid):
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context(locale="zh-TW")
+                page = await context.new_page()
+                name = "未知名稱"
+                for attempt in range(3):
+                    try:
+                        await page.goto("https://wos-giftcode.centurygame.com/")
+                        await page.fill('input[type="text"]', pid)
+                        await page.click(".login_btn")
+                        await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
+                        await page.wait_for_selector(".name", timeout=5000)
+                        name_el = await page.query_selector(".name")
+                        name = await name_el.inner_text() if name_el else "未知名稱"
+                        break
+                    except:
+                        await page.wait_for_timeout(1000 + attempt * 500)
+                await browser.close()
+                return name
+
+        # 先查 Firestore 並補全缺失 ID
+        doc_ref_base = db.collection("ids")
+        loop = asyncio.get_event_loop()
+        for pid in player_ids:
+            doc_ref = doc_ref_base.document("global").collection("players").document(pid)
+            if not doc_ref.get().exists:
+                name = loop.run_until_complete(fetch_and_store_name(pid))
+                doc_ref.set({
+                    "name": name,
+                    "updated_at": datetime.utcnow()
+                }, merge=True)
+                logger.info(f"[{pid}] 📌 自動新增至 Firestore：{name}")
+
+        # 開始兌換處理
         for i in range(0, len(player_ids), MAX_BATCH_SIZE):
             batch = player_ids[i:i + MAX_BATCH_SIZE]
             tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
             results = await asyncio.gather(*tasks)
-            final_failed_ids = []
-
+            await asyncio.sleep(1)
             for r in results:
                 if r.get("success"):
                     all_success.append({
@@ -587,11 +622,12 @@ def redeem_submit():
                         "debug_html_base64": r.get("debug_html_base64", None)
                     })
                     logger.warning(f"[{r['player_id']}] ❌ 失敗：{r.get('reason')}")
-                    # 判斷是否是驗證碼三次都錯
-                    if "驗證碼三次辨識皆失敗" in (r.get("reason") or ""):
-                        final_failed_ids.append(r.get("player_id"))
 
-        # webhook 訊息內容組合
+                    if "驗證碼三次辨識皆失敗" in (r.get("reason") or ""):
+                        doc = doc_ref_base.document("global").collection("players").document(r["player_id"]).get()
+                        name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
+                        final_failed_ids.append(f"{r['player_id']} ({name})")
+
         webhook_message = (
             f"🎁 處理完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
             f"禮包碼：{code}\n"
@@ -600,10 +636,9 @@ def redeem_submit():
             webhook_message += "⚠️ 三次辨識失敗的 ID（請改用單人兌換）：\n" + "\n".join(final_failed_ids)
         else:
             webhook_message += "✅ 無任何 ID 出現三次辨識失敗"
+
         webhook_message += f"\n⌛ 執行時間：約 {time.time() - start_time:.1f} 秒"
 
-
-        # 發送 Discord webhook
         if os.getenv("DISCORD_WEBHOOK_URL"):
             try:
                 resp = requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
@@ -615,7 +650,6 @@ def redeem_submit():
         else:
             logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送")
 
-    # ✅ 改為主線程執行非同步任務
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(process_all())
