@@ -1,9 +1,15 @@
 aiohttp
-discord.py
+discord.py==2.3.2
+easyocr
 firebase-admin
 flask
-google-cloud-firestore
+googletrans==4.0.0-rc1
 nest_asyncio
+numpy
+opencv-python-headless
+pillow
 playwright
 python-dotenv
+pytesseract
+pytz
 requests
