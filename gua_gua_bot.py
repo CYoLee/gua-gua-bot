@@ -236,6 +236,9 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
                     return
 
                 logger.info(f"[{guild_id}] 已觸發後端兌換流程，交由 webhook 回報")
+    except Exception as e:
+            logger.exception(f"[Critical Error] 觸發後端兌換時發生錯誤（guild_id: {guild_id}）")
+            await interaction.followup.send(f"❌ 發送兌換請求失敗：{e}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
