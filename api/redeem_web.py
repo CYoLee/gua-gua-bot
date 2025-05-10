@@ -262,12 +262,15 @@ async def _solve_captcha(page, attempt, player_id):
         result = await solve_with_2captcha(b64_img)
 
         if result:
-            method_used = "2captcha"
-            logger.info(f"[{player_id}] 第 {attempt} 次：2Captcha 成功辨識 → {result}")
-            return result, method_used
-        else:
-            logger.info(f"[{player_id}] 第 {attempt} 次：2Captcha 辨識失敗，回傳 None")
-            return fallback_text, method_used
+            result = result.strip()
+            if len(result) == 4 and result.isalnum():
+                method_used = "2captcha"
+                logger.info(f"[{player_id}] 第 {attempt} 次：2Captcha 成功辨識 → {result}")
+                return result, method_used
+            else:
+                logger.warning(f"[{player_id}] 第 {attempt} 次：2Captcha 回傳長度不符（{len(result)}字 → {result}），強制刷新")
+                await _refresh_captcha(page, player_id=player_id)
+                return fallback_text, method_used
 
     except Exception as e:
         logger.exception(f"[{player_id}] 第 {attempt} 次：例外錯誤：{e}")
@@ -553,7 +556,8 @@ def redeem_submit():
         return jsonify({"success": False, "reason": "player_ids 必須是列表"}), 400
 
     MAX_BATCH_SIZE = 5
-
+    
+    start_time = time.time()
     async def process_all():
         all_success = []
         all_fail = []
@@ -570,6 +574,7 @@ def redeem_submit():
                         "player_id": r["player_id"],
                         "message": r.get("message")
                     })
+                    logger.info(f"[{r['player_id']}] ✅ 成功：{r.get('message')}")
                 else:
                     all_fail.append({
                         "player_id": r.get("player_id"),
@@ -578,6 +583,7 @@ def redeem_submit():
                         "debug_img_base64": r.get("debug_img_base64", None),
                         "debug_html_base64": r.get("debug_html_base64", None)
                     })
+                    logger.warning(f"[{r['player_id']}] ❌ 失敗：{r.get('reason')}")
                     # 判斷是否是驗證碼三次都錯
                     if "驗證碼三次辨識皆失敗" in (r.get("reason") or ""):
                         final_failed_ids.append(r.get("player_id"))
@@ -591,24 +597,27 @@ def redeem_submit():
             webhook_message += "⚠️ 三次辨識失敗的 ID（請改用單人兌換）：\n" + "\n".join(final_failed_ids)
         else:
             webhook_message += "✅ 無任何 ID 出現三次辨識失敗"
+        webhook_message += f"\n⌛ 執行時間：約 {time.time() - start_time:.1f} 秒"
+
 
         # 發送 Discord webhook
         if os.getenv("DISCORD_WEBHOOK_URL"):
             try:
-                requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
+                resp = requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
                     "content": webhook_message
                 })
+                logger.info(f"Webhook 發送結果：{resp.status_code} {resp.text}")
             except Exception as e:
                 logger.warning(f"Webhook 發送失敗：{e}")
+        else:
+            logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送")
 
-    def run_in_thread():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(process_all())
+    # ✅ 改為主線程執行非同步任務
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(process_all())
 
-    threading.Thread(target=run_in_thread).start()
-
-    return jsonify({"message": "兌換已開始處理，稍後將回報結果"}), 200
+    return jsonify({"message": "兌換已完成，Webhook 已送出（或已嘗試）"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
