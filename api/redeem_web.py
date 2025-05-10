@@ -208,7 +208,8 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
             logger.info(f"[{player_id}] 最終失敗：驗證碼三次辨識皆失敗")
             return await _package_result(page, False, "驗證碼三次辨識皆失敗，放棄兌換", player_id, debug_logs, debug=debug)
 
-    except Exception:
+    except Exception as e:
+        logger.exception(f"[{player_id}] 發生例外錯誤：{e}")
         html, img = None, None
         if debug:
             try:
@@ -556,7 +557,7 @@ def redeem_submit():
         return jsonify({"success": False, "reason": "player_ids 必須是列表"}), 400
 
     MAX_BATCH_SIZE = 5
-    
+
     start_time = time.time()
     async def process_all():
         all_success = []
