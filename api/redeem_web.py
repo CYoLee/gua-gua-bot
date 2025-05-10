@@ -144,6 +144,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                         return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs, debug=debug)
                     return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs)
 
+            await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
 
             for attempt in range(1, OCR_MAX_RETRIES + 1):
@@ -407,7 +408,7 @@ async def _refresh_captcha(page, player_id=None):
             confirm_btn = await modal.query_selector('.confirm_btn')
             if confirm_btn and await confirm_btn.is_visible():
                 await confirm_btn.click()
-            await page.wait_for_timeout(300)
+            await page.wait_for_timeout(1000)
 
         original_bytes = await captcha_img.screenshot()
         original_hash = hashlib.md5(original_bytes).hexdigest() if original_bytes else ""
@@ -494,6 +495,7 @@ def add_id():
                         await page.goto("https://wos-giftcode.centurygame.com/")
                         await page.fill('input[type="text"]', player_id)
                         await page.click(".login_btn")
+                        await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
                         await page.wait_for_selector(".name", timeout=8000)
                         name_el = await page.query_selector(".name")
                         name = await name_el.inner_text() if name_el else "未知名稱"
@@ -645,7 +647,8 @@ def update_names_api():
                             await page.goto("https://wos-giftcode.centurygame.com/")
                             await page.fill('input[type="text"]', pid)
                             await page.click(".login_btn")
-                            await page.wait_for_selector(".name", timeout=8000)
+                            await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
+                            await page.wait_for_selector(".name", timeout=5000)
                             name_el = await page.query_selector(".name")
                             name = await name_el.inner_text() if name_el else "未知名稱"
                             break  # 有成功取得名稱就中止重試
