@@ -12,6 +12,7 @@ import asyncio
 import firebase_admin
 import logging
 import sys
+from playwright.async_api import async_playwright
 
 from dotenv import load_dotenv
 from discord import app_commands
