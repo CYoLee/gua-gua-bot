@@ -71,7 +71,75 @@ FAILURE_KEYWORDS = ["請先輸入", "不存在", "錯誤", "無效", "超出", "
 RETRY_KEYWORDS = ["驗證碼錯誤", "驗證碼已過期", "伺服器繁忙", "請稍後再試", "系統異常", "請重試", "處理中"]
 REDEEM_RETRIES = 3
 # === 主流程 ===
+async def process_redeem(payload):
+    code = payload.get("code")
+    player_ids = payload.get("player_ids")
+    debug = payload.get("debug", False)
 
+    MAX_BATCH_SIZE = 5
+    doc_ref_base = db.collection("ids")
+    all_success = []
+    all_fail = []
+
+    for i in range(0, len(player_ids), MAX_BATCH_SIZE):
+        batch = player_ids[i:i + MAX_BATCH_SIZE]
+        tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
+        results = await asyncio.gather(*tasks)
+        await asyncio.sleep(1)
+
+        for r in results:
+            if r.get("success"):
+                all_success.append({
+                    "player_id": r["player_id"],
+                    "message": r.get("message")
+                })
+                logger.info(f"[{r['player_id']}] ✅ 重新成功：{r.get('message')}")
+            else:
+                all_fail.append({
+                    "player_id": r.get("player_id"),
+                    "reason": r.get("reason")
+                })
+                logger.warning(f"[{r['player_id']}] ❌ 重新失敗：{r.get('reason')}")
+
+                if r.get("reason") in ["驗證碼三次辨識皆失敗", "Timeout：單人兌換超過 90 秒"]:
+                    doc = doc_ref_base.document("global").collection("players").document(r["player_id"]).get()
+                    name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
+                    db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).set({
+                        "name": name,
+                        "reason": r.get("reason"),
+                        "updated_at": datetime.utcnow()
+                    })
+                else:
+                    # 若成功或錯誤已排除，從失敗清單移除
+                    db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
+    # 在 process_redeem(payload) 裡加在 for loop 處理完所有 ID 之後
+    webhook_message = (
+        f"🔁 重新兌換完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
+        f"禮包碼：{code}\n"
+    )
+
+    if all_fail:
+        failed_lines = []
+        for r in all_fail:
+            pid = r["player_id"]
+            doc = db.collection("ids").document("global").collection("players").document(pid).get()
+            name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
+            failed_lines.append(f"{pid} ({name})")
+        webhook_message += "⚠️ 仍失敗的 ID：\n" + "\n".join(failed_lines)
+    else:
+        webhook_message += "✅ 所有失敗紀錄已成功兌換"
+
+    if os.getenv("DISCORD_WEBHOOK_URL"):
+        try:
+            resp = requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
+                "content": webhook_message
+            })
+            logger.info(f"Webhook 發送結果：{resp.status_code} {resp.text}")
+        except Exception as e:
+            logger.warning(f"Webhook 發送失敗：{e}")
+    else:
+        logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送")
+        
 async def run_redeem_with_retry(player_id, code, debug=False):
     debug_logs = []
 
@@ -663,6 +731,15 @@ def redeem_submit():
                         name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
                         final_failed_ids.append(f"{r['player_id']} ({name})")
 
+                if r.get("reason") in ["驗證碼三次辨識皆失敗", "Timeout：單人兌換超過 90 秒"]:
+                    doc = doc_ref_base.document("global").collection("players").document(r["player_id"]).get()
+                    name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
+                    db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).set({
+                        "name": name,
+                        "reason": r.get("reason"),
+                        "updated_at": datetime.utcnow()
+                    })
+
         webhook_message = (
             f"🎁 處理完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
             f"禮包碼：{code}\n"
@@ -752,6 +829,38 @@ def update_names_api():
 
     except Exception as e:
         return jsonify({"success": False, "reason": str(e)}), 500
+
+@app.route("/retry_failed", methods=["POST"])
+def retry_failed():
+    data = request.json
+    code = data.get("code")
+    debug = data.get("debug", False)
+
+    if not code:
+        return jsonify({"success": False, "reason": "缺少 code"}), 400
+
+    doc_ref_base = db.collection("failed_redeems").document(code).collection("players")
+    failed_docs = doc_ref_base.stream()
+    player_ids = [doc.id for doc in failed_docs]
+
+    if not player_ids:
+        return jsonify({"success": False, "reason": f"找不到 failed_redeems 清單：{code}"}), 404
+
+    # 呼叫現有流程
+    try:
+        payload = {
+            "code": code,
+            "player_ids": player_ids,
+            "debug": debug
+        }
+        # 假設這段是呼叫本地內部 API（也可直接 call 內部函式）
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process_redeem(payload))
+        return jsonify({"success": True, "message": f"已針對 {len(player_ids)} 筆失敗紀錄重新兌換"}), 200
+    except Exception as e:
+        return jsonify({"success": False, "reason": str(e)}), 500
+
 
 @app.route("/")
 def health():
