@@ -209,6 +209,11 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
     await interaction.response.send_message("🎁 兌換已開始處理，稍後將由系統回報結果", ephemeral=True)
     asyncio.create_task(trigger_backend_redeem(interaction, code, player_id))
 
+async def get_player_ids(guild_id):
+    # 從 Firestore 獲取玩家 ID
+    docs = db.collection("ids").document(guild_id).collection("players").stream()
+    return [doc.id for doc in docs]
+
 async def trigger_backend_redeem(interaction: discord.Interaction, code: str, player_ids: list = None):
     guild_id = str(interaction.guild_id)
 
