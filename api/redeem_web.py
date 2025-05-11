@@ -127,24 +127,24 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
             await page.fill('input[type="text"]', player_id)
             await page.click(".login_btn")
 
+            # 嘗試等待錯誤 modal
             try:
                 await page.wait_for_selector(".message_modal", timeout=5000)
                 modal_text = await page.inner_text(".message_modal .msg")
                 log_entry(0, error_modal=modal_text)
-                if any(k in modal_text for k in ["請先輸入", "不存在", "錯誤", "無效", "伺服器繁忙"]):
+                if any(k in modal_text for k in FAILURE_KEYWORDS):
                     logger.info(f"[{player_id}] 登入失敗：{modal_text}")
                     return await _package_result(page, False, f"登入失敗：{modal_text}", player_id, debug_logs, debug=debug)
             except TimeoutError:
-                try:
-                    await page.wait_for_selector(".name", timeout=5000)
-                except TimeoutError:
-                    if debug:
-                        html = await page.content()
-                        img = await page.screenshot()
-                        return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs, debug=debug)
-                    return await _package_result(page, False, "登入失敗（未成功登入也未出現錯誤提示）", player_id, debug_logs)
+                pass  # 無 modal 則繼續檢查登入成功
 
-            await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
+            # 加強：等待 .name 與兌換欄位都出現才視為成功
+            try:
+                await page.wait_for_selector(".name", timeout=5000)
+                await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
+            except TimeoutError:
+                return await _package_result(page, False, "登入失敗（未成功進入兌換頁）", player_id, debug_logs, debug=debug)
+
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
 
             for attempt in range(1, OCR_MAX_RETRIES + 1):
@@ -152,10 +152,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                     captcha_text, method_used = await _solve_captcha(page, attempt, player_id)
                     log_entry(attempt, captcha_text=captcha_text, method=method_used)
 
-                    if not captcha_text or len(captcha_text.strip()) < 4:
-                        log_entry(attempt, info=f"辨識過短（長度={len(captcha_text.strip())}），強制送出")
-
-                    await page.fill('input[placeholder="請輸入驗證碼"]', captcha_text)
+                    await page.fill('input[placeholder="請輸入驗證碼"]', captcha_text or "")
 
                     try:
                         await page.click(".exchange_btn", timeout=3000)
@@ -241,6 +238,10 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
 async def _solve_captcha(page, attempt, player_id):
     fallback_text = f"_try{attempt}"
     method_used = "none"
+    def log_entry(attempt, **kwargs):
+        entry = {"attempt": attempt}
+        entry.update(kwargs)
+        logger.info(f"[{player_id}] DebugLog: {entry}")
 
     try:
         captcha_img = await page.query_selector(".verify_pic")
@@ -262,6 +263,11 @@ async def _solve_captcha(page, attempt, player_id):
 
         logger.info(f"[{player_id}] 第 {attempt} 次：使用 2Captcha 辨識")
         result = await solve_with_2captcha(b64_img)
+        if result == "UNSOLVABLE":
+            logger.warning(f"[{player_id}] 第 {attempt} 次：2Captcha 回傳無解 → 自動刷新圖")
+            log_entry(attempt, info="2Captcha 回傳 UNSOLVABLE")
+            await _refresh_captcha(page, player_id=player_id)
+            return fallback_text, method_used
 
         if result:
             result = result.strip()
@@ -383,9 +389,13 @@ async def solve_with_2captcha(b64_img):
                     result = await resp.json()
                     if result.get("status") == 1:
                         return result.get("request")
-                    if result.get("request") != "CAPCHA_NOT_READY":
+                    if result.get("request") == "ERROR_CAPTCHA_UNSOLVABLE":
+                        logger.warning(f"2Captcha 回傳無法解碼錯誤 → {result}")
+                        return "UNSOLVABLE"
+                    elif result.get("request") != "CAPCHA_NOT_READY":
                         logger.warning(f"2Captcha 回傳錯誤結果：{result}")
                         return None
+
             except Exception as e:
                 logger.exception(f"查詢 2Captcha 結果發生錯誤：{e}")
                 return None
