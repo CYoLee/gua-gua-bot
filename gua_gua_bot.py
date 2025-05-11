@@ -35,6 +35,7 @@ logger.propagate = False  # 避免重複輸出
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 REDEEM_API_URL = os.getenv("REDEEM_API_URL")
+redeem_submit_url = f"{REDEEM_API_URL}/redeem_submit"
 tz = pytz.timezone("Asia/Taipei")
 LANG_CHOICES = [
     app_commands.Choice(name="繁體中文", value="zh"),
@@ -235,7 +236,7 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
         # 發送請求並等待回應
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.post(REDEEM_API_URL, json=payload, timeout=5) as resp:
+                async with session.post(redeem_submit_url, json=payload, timeout=5) as resp:
                     if resp.status == 200:
                         logger.info(f"[{guild_id}] 觸發後端兌換流程（未等待完成）")
                     else:
