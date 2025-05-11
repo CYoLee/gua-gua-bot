@@ -98,12 +98,14 @@ async def process_redeem(payload):
             else:
                 reason = r.get("reason")  # 確保 reason 獲得賦值
                 if "您已領取過該禮物" in reason:
-                    # 已領取過的 ID 不算真正的失敗，單獨統計
+                    # 已領取過的 ID 不算真正的失敗，單獨統計並刪除失敗資料
                     all_received.append({
                         "player_id": r["player_id"],
                         "message": reason
                     })
-                    logger.info(f"[{r['player_id']}] 已領取過該禮物，無法再次領取，跳過處理。")
+                    # 刪除該玩家的資料，因為他已領取過禮物
+                    db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
+                    logger.info(f"[{r['player_id']}] 已領取過該禮物，無法再次領取，從 failed_redeems 中刪除。")
                     continue  # 跳過該 ID，並且不進行刪除等操作
 
                 all_fail.append({
