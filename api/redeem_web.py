@@ -76,7 +76,19 @@ async def run_redeem_with_retry(player_id, code, debug=False):
     debug_logs = []
 
     for redeem_retry in range(REDEEM_RETRIES + 1):
-        result = await _redeem_once(player_id, code, debug_logs, redeem_retry, debug=debug)
+        try:
+            result = await asyncio.wait_for(
+                _redeem_once(player_id, code, debug_logs, redeem_retry, debug=debug),
+                timeout=90  # 每次單人兌換最多 90 秒
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"[{player_id}] 第 {redeem_retry + 1} 次：超過 90 秒 timeout")
+            return {
+                "success": False,
+                "reason": "Timeout：單人兌換超過 90 秒",
+                "player_id": player_id,
+                "debug_logs": debug_logs
+            }
 
         if result is None or not isinstance(result, dict):
             logger.error(f"[{player_id}] 第 {redeem_retry + 1} 次：_redeem_once 回傳 None 或格式錯誤 → {result}")
@@ -250,7 +262,11 @@ async def _solve_captcha(page, attempt, player_id):
             return fallback_text, method_used
 
         await page.wait_for_timeout(500)
-        captcha_bytes = await captcha_img.screenshot()
+        try:
+            captcha_bytes = await asyncio.wait_for(captcha_img.screenshot(), timeout=10)
+        except Exception as e:
+            logger.warning(f"[{player_id}] 第 {attempt} 次：captcha screenshot timeout 或錯誤 → {e}")
+            return fallback_text, method_used
 
         # ✅ 圖片過小則自動刷新，避免 2Captcha 拒收
         if not captcha_bytes or len(captcha_bytes) < 100:
@@ -420,7 +436,11 @@ async def _refresh_captcha(page, player_id=None):
                 await confirm_btn.click()
             await page.wait_for_timeout(1000)
 
-        original_bytes = await captcha_img.screenshot()
+        try:
+            original_bytes = await asyncio.wait_for(captcha_img.screenshot(), timeout=10)
+        except Exception as e:
+            logger.warning(f"[{player_id}] captcha 原圖 screenshot timeout 或錯誤 → {e}")
+            return
         original_hash = hashlib.md5(original_bytes).hexdigest() if original_bytes else ""
 
         # 點擊刷新按鈕
@@ -446,7 +466,12 @@ async def _refresh_captcha(page, player_id=None):
         # 等待圖刷新
         for i in range(30):
             await page.wait_for_timeout(150)
-            new_bytes = await captcha_img.screenshot()
+            try:
+                new_bytes = await asyncio.wait_for(captcha_img.screenshot(), timeout=10)
+            except Exception as e:
+                logger.warning(f"[{player_id}] captcha 新圖 screenshot timeout 或錯誤（第 {i+1} 次）→ {e}")
+                continue
+
             if not new_bytes or len(new_bytes) < 1024:
                 continue
             new_hash = hashlib.md5(new_bytes).hexdigest()
