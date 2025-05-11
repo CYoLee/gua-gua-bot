@@ -12,7 +12,6 @@ import asyncio
 import firebase_admin
 import logging
 import sys
-from playwright.async_api import async_playwright
 
 from dotenv import load_dotenv
 from discord import app_commands
@@ -564,52 +563,32 @@ async def context_translate(interaction: discord.Interaction, message: discord.M
 @app_commands.describe(guild_id="請輸入要更新的 Discord 伺服器 ID")
 async def update_names(interaction: discord.Interaction, guild_id: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
-    updated = []
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(locale="zh-TW")
-        page = await context.new_page()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{REDEEM_API_URL}/update_names_api", json={
+                "guild_id": guild_id
+            }) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    await interaction.followup.send(f"❌ API 回傳錯誤：{resp.status}\n{text}", ephemeral=True)
+                    return
 
-        docs = db.collection("ids").document(guild_id).collection("players").stream()
-        for doc in docs:
-            pid = doc.id
-            original_name = doc.to_dict().get("name") or "未知名稱"
-            name = "未知名稱"
+                result = await resp.json()
+                updated = result.get("updated", [])
 
-            for attempt in range(3):
-                try:
-                    await page.goto("https://wos-giftcode.centurygame.com/")
-                    await page.fill('input[type="text"]', pid)
-                    await page.click(".login_btn")
-                    await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
-                    await page.wait_for_selector(".name", timeout=5000)
-                    name_el = await page.query_selector(".name")
-                    name = await name_el.inner_text() if name_el else "未知名稱"
-                    break
-                except:
-                    await page.wait_for_timeout(1000 + attempt * 500)
+                if updated:
+                    lines = [f"- {u['player_id']} ➜ {u['name']}" for u in updated]
+                    summary = "\n".join(lines)
+                    logger.info(f"[update_names] 共更新 {len(updated)} 筆名稱：\n{summary}")
+                    await interaction.followup.send(
+                        f"✨ 共更新 {len(updated)} 筆名稱：\n\n{summary}", ephemeral=True
+                    )
+                else:
+                    logger.info("[update_names] 無任何名稱需要更新")
+                    await interaction.followup.send("✅ 沒有任何名稱需要更新", ephemeral=True)
 
-            if name != original_name:
-                ref = db.collection("ids").document(guild_id).collection("players").document(pid)
-                ref.update({
-                    "name": name,
-                    "updated_at": datetime.utcnow()
-                })
-                updated.append({"player_id": pid, "name": name})
-
-        await browser.close()
-
-    # ✅ 輸出結果
-    if updated:
-        lines = [f"- {u['player_id']} ➜ {u['name']}" for u in updated]
-        summary = "\n".join(lines)
-        logger.info(f"[update_names] 共更新 {len(updated)} 筆名稱：\n{summary}")
-        await interaction.followup.send(
-            f"✨ 共更新 {len(updated)} 筆名稱：\n\n{summary}", ephemeral=True
-        )
-    else:
-        logger.info("[update_names] 無任何名稱需要更新")
-        await interaction.followup.send("✅ 沒有任何名稱需要更新", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
 bot.run(TOKEN)
