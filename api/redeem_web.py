@@ -693,12 +693,15 @@ def update_names_api():
                     existing_doc = doc_ref.get()
                     existing_name = existing_doc.to_dict().get("name") if existing_doc.exists else None
 
-                    if name != "未知名稱" and existing_name != name:
-                        doc_ref.update({
-                            "name": name,
-                            "updated_at": datetime.utcnow()
-                        })
-                        updated.append({"player_id": pid, "name": name})
+                    if name != "未知名稱":
+                        if existing_name != name or existing_name in [None, "未知名稱"]:
+                            doc_ref.update({
+                                "name": name,
+                                "updated_at": datetime.utcnow()
+                            })
+                            updated.append({"player_id": pid, "name": name})
+                    else:
+                        logger.info(f"[{pid}] 保留原名稱（未更新）：{existing_name}")
 
                 await browser.close()
 
