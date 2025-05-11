@@ -80,6 +80,7 @@ async def process_redeem(payload):
     doc_ref_base = db.collection("ids")
     all_success = []
     all_fail = []
+    all_received = []  # 用來儲存已領取過的 ID
 
     for i in range(0, len(player_ids), MAX_BATCH_SIZE):
         batch = player_ids[i:i + MAX_BATCH_SIZE]
@@ -95,29 +96,53 @@ async def process_redeem(payload):
                 })
                 logger.info(f"[{r['player_id']}] ✅ 重新成功：{r.get('message')}")
             else:
+                reason = r.get("reason")  # 確保 reason 獲得賦值
+                if "您已領取過該禮物" in reason:
+                    # 已領取過的 ID 不算真正的失敗，單獨統計
+                    all_received.append({
+                        "player_id": r["player_id"],
+                        "message": reason
+                    })
+                    logger.info(f"[{r['player_id']}] 已領取過該禮物，無法再次領取，跳過處理。")
+                    continue  # 跳過該 ID，並且不進行刪除等操作
+
                 all_fail.append({
                     "player_id": r.get("player_id"),
-                    "reason": r.get("reason")
+                    "reason": reason
                 })
-                logger.warning(f"[{r['player_id']}] ❌ 重新失敗：{r.get('reason')}")
+                logger.warning(f"[{r['player_id']}] ❌ 重新失敗：{reason}")
 
+                # 特定錯誤訊息需刪除資料
+                if "您已領取過該禮物" not in reason and "兌換成功，請在信件中領取獎勳" not in reason:
+                    db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
+                    logger.info(f"[{r['player_id']}] 資料已刪除：已領取過或完成兌換，理由：{reason}")
+
+                # 針對其他特殊錯誤進行更新
                 if r.get("reason") in ["驗證碼三次辨識皆失敗", "Timeout：單人兌換超過 90 秒"]:
                     doc = doc_ref_base.document("global").collection("players").document(r["player_id"]).get()
                     name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
                     db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).set({
                         "name": name,
                         "reason": r.get("reason"),
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.datetime.now(datetime.timezone.utc)  # 修正為 UTC 時間
                     })
                 else:
-                    # 若成功或錯誤已排除，從失敗清單移除
+                    # 若為其他失敗情況，則刪除該玩家資料
                     db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
-    # 在 process_redeem(payload) 裡加在 for loop 處理完所有 ID 之後
+
+    # ✅ 全部處理完才發送 webhook
     webhook_message = (
         f"🔁 重新兌換完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
         f"禮包碼：{code}\n"
     )
+    # 顯示已領取過的 ID
+    if all_received:
+        received_lines = []
+        for r in all_received:
+            received_lines.append(f"{r['player_id']} ({r['message']})")
+        webhook_message += "📋 已領取過的 ID（未列入失敗）：\n" + "\n".join(received_lines)
 
+    # 顯示失敗的 ID
     if all_fail:
         failed_lines = []
         for r in all_fail:
@@ -139,7 +164,7 @@ async def process_redeem(payload):
             logger.warning(f"Webhook 發送失敗：{e}")
     else:
         logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送")
-        
+
 async def run_redeem_with_retry(player_id, code, debug=False):
     debug_logs = []
 

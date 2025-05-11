@@ -209,36 +209,70 @@ async def redeem_submit(interaction: discord.Interaction, code: str, player_id: 
     await interaction.response.send_message("🎁 兌換已開始處理，稍後將由系統回報結果", ephemeral=True)
     asyncio.create_task(trigger_backend_redeem(interaction, code, player_id))
 
-async def trigger_backend_redeem(interaction: discord.Interaction, code: str, player_id: str = None):
+async def trigger_backend_redeem(interaction: discord.Interaction, code: str, player_ids: list = None):
     guild_id = str(interaction.guild_id)
 
+    if player_ids is None:
+        player_ids = await get_player_ids(guild_id)  # 添加一個方法來獲取 ID 清單
+
+    if not player_ids:
+        await interaction.followup.send("⚠️ 沒有找到任何玩家 ID", ephemeral=True)
+        return
+
     try:
-        if player_id:
-            player_ids = [player_id]
-        else:
-            docs = await asyncio.to_thread(
-                lambda: list(db.collection("ids").document(guild_id).collection("players").stream())
-            )
-            player_ids = [doc.id for doc in docs]
+        # 構建 API 請求 payload
+        payload = {
+            "code": code,
+            "player_ids": player_ids,
+            "debug": False
+        }
 
-        if not player_ids:
-            await interaction.followup.send("⚠️ 沒有找到任何可兌換的玩家 ID", ephemeral=True)
-            return
-
-        api_url = f"{REDEEM_API_URL.rstrip('/')}/redeem_submit"
-        headers = {"Content-Type": "application/json"}
-        payload = {"code": code, "player_ids": player_ids, "debug": False}
-
-        # ✅ 發送請求但不等待回應，不使用 async with
+        # 發送請求並等待回應
         async with aiohttp.ClientSession() as session:
             try:
-                await session.post(api_url, headers=headers, json=payload, timeout=5)
-                logger.info(f"[{guild_id}] 觸發後端兌換流程（未等待完成）")
+                async with session.post(REDEEM_API_URL, json=payload, timeout=5) as resp:
+                    if resp.status == 200:
+                        logger.info(f"[{guild_id}] 觸發後端兌換流程（未等待完成）")
+                    else:
+                        logger.error(f"[{guild_id}] 發送兌換請求失敗，API 回傳錯誤：{resp.status}")
             except (asyncio.TimeoutError, ClientError) as e:
-                logger.warning(f"[{guild_id}] 發送兌換請求失敗，但忽略錯誤（交由 webhook 回報）：{e}")
-
+                logger.warning(f"[{guild_id}] 發送兌換請求超時或錯誤，將由 webhook 回報：{e}")
+                await interaction.followup.send(f"❌ 發送請求失敗，錯誤信息：{str(e)}", ephemeral=True)
     except Exception as e:
         logger.exception(f"[Critical Error] trigger_backend_redeem 發生錯誤（guild_id: {guild_id}）")
+        await interaction.followup.send(f"❌ 觸發兌換流程時發生錯誤：{e}", ephemeral=True)
+
+@tree.command(name="retry_failed", description="重新兌換失敗的 ID / Retry failed ID")
+@app_commands.describe(code="禮包碼 / Redeem code")
+async def retry_failed(interaction: discord.Interaction, code: str):
+    await interaction.response.send_message("🎁 重新兌換已開始處理，稍後將由系統回報結果", ephemeral=True)
+    
+    # 從 Firestore 找到失敗的 ID
+    failed_docs = db.collection("failed_redeems").document(code).collection("players").stream()
+    player_ids = [doc.id for doc in failed_docs]
+
+    if not player_ids:
+        await interaction.followup.send("⚠️ 沒有找到失敗的 ID", ephemeral=True)
+        return
+
+    # 呼叫現有的兌換流程
+    try:
+        payload = {
+            "code": code,
+            "player_ids": player_ids,
+            "debug": False
+        }
+        # 呼叫後端 API（這裡直接進行兌換）
+        async with aiohttp.ClientSession() as session:
+            async with session.post(REDEEM_API_URL, json=payload) as resp:
+                if resp.status == 200:
+                    await interaction.followup.send(f"🎁 重新兌換 {len(player_ids)} 個失敗的 ID 已發送到後端進行處理", ephemeral=True)
+                else:
+                    # 處理 API 錯誤回應
+                    error_message = await resp.text()
+                    await interaction.followup.send(f"❌ 發生錯誤：{error_message}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
