@@ -77,7 +77,7 @@ async def add_id(interaction: discord.Interaction, player_ids: str):
                 invalid_ids.append(pid)
 
         if invalid_ids:
-            msg = f"⚠️ 無效 ID（非 9 位數字）：`{', '.join(invalid_ids)}`"
+            msg = f"⚠️ 無效 ID（非 9 位數字） / Invalid ID(s) (not 9 digits):`{', '.join(invalid_ids)}`"
             await interaction.followup.send(msg, ephemeral=True)
             return
 
@@ -208,7 +208,7 @@ async def list_ids(interaction: discord.Interaction):
 @tree.command(name="redeem_submit", description="提交兌換碼 / Submit redeem code")
 @app_commands.describe(code="要兌換的禮包碼", player_id="選填：指定兌換的玩家 ID（單人兌換）")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
-    await interaction.response.send_message("🎁 兌換已開始處理，稍後將由系統回報結果", ephemeral=True)
+    await interaction.response.send_message("🎁 兌換已開始處理 / Redemption started. 系統稍後會回報結果 / Result will be reported shortly.", ephemeral=True)
     asyncio.create_task(trigger_backend_redeem(interaction, code, player_id))
 
 async def get_player_ids(guild_id):
@@ -223,7 +223,7 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
         player_ids = await get_player_ids(guild_id)  # 添加一個方法來獲取 ID 清單
 
     if not player_ids:
-        await interaction.followup.send("⚠️ 沒有找到任何玩家 ID", ephemeral=True)
+        await interaction.followup.send("⚠️ 沒有找到任何玩家 ID / No player ID found", ephemeral=True)
         return
 
     try:
@@ -243,23 +243,23 @@ async def trigger_backend_redeem(interaction: discord.Interaction, code: str, pl
                     else:
                         logger.error(f"[{guild_id}] 發送兌換請求失敗，API 回傳錯誤：{resp.status}")
             except (asyncio.TimeoutError, ClientError) as e:
-                logger.warning(f"[{guild_id}] 發送兌換請求超時或錯誤，將由 webhook 回報：{e}")
-                await interaction.followup.send(f"❌ 發送請求失敗，錯誤信息：{str(e)}", ephemeral=True)
+                logger.warning(f"[{guild_id}] 發送兌換請求超時或錯誤 / Request timeout or error. 將由 webhook 回報：{e}")
+                await interaction.followup.send(f"❌ 發送請求失敗 / Failed to send request. 錯誤信息 / Error:{str(e)}", ephemeral=True)
     except Exception as e:
         logger.exception(f"[Critical Error] trigger_backend_redeem 發生錯誤（guild_id: {guild_id}）")
-        await interaction.followup.send(f"❌ 觸發兌換流程時發生錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 觸發兌換流程錯誤 / Failed to trigger redemption:{e}", ephemeral=True)
 
 @tree.command(name="retry_failed", description="重新兌換失敗的 ID / Retry failed ID")
 @app_commands.describe(code="禮包碼 / Redeem code")
 async def retry_failed(interaction: discord.Interaction, code: str):
-    await interaction.response.send_message("🎁 重新兌換已開始處理，稍後將由系統回報結果", ephemeral=True)
+    await interaction.response.send_message("🎁 重新兌換開始 / Retrying redemption. 系統稍後會回報結果 / System will report back shortly.", ephemeral=True)
     
     # 從 Firestore 找到失敗的 ID
     failed_docs = db.collection("failed_redeems").document(code).collection("players").stream()
     player_ids = [doc.id for doc in failed_docs]
 
     if not player_ids:
-        await interaction.followup.send("⚠️ 沒有找到失敗的 ID", ephemeral=True)
+        await interaction.followup.send("⚠️ 沒有找到失敗的 ID / No failed IDs found", ephemeral=True)
         return
 
     # 呼叫現有的兌換流程
@@ -277,9 +277,9 @@ async def retry_failed(interaction: discord.Interaction, code: str):
                 else:
                     # 處理 API 錯誤回應
                     error_message = await resp.text()
-                    await interaction.followup.send(f"❌ 發生錯誤：{error_message}", ephemeral=True)
+                    await interaction.followup.send(f"❌ 發生錯誤 / Error:{error_message}", ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 發生錯誤 / Error:{e}", ephemeral=True)
 
 # === 活動提醒 ===
 @tree.command(name="add_notify", description="新增提醒 / Add reminder")
@@ -409,7 +409,7 @@ async def edit_notify(
             firestore_dt = old_data["datetime"]
             orig = datetime.fromtimestamp(firestore_dt.timestamp(), tz)
         except Exception:
-            await interaction.followup.send("❌ 原時間格式解析失敗，無法修改", ephemeral=True)
+            await interaction.followup.send("❌ 時間格式錯誤，無法修改 / Invalid original time format, cannot edit.", ephemeral=True)
             return
 
         # === 修改時間 ===
@@ -612,7 +612,7 @@ async def update_names(interaction: discord.Interaction, guild_id: str):
             }) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    await interaction.followup.send(f"❌ API 回傳錯誤：{resp.status}\n{text}", ephemeral=True)
+                    await interaction.followup.send(f"❌ API 回傳錯誤 / API error:{resp.status}\n{text}", ephemeral=True)
                     return
 
                 result = await resp.json()
@@ -623,11 +623,12 @@ async def update_names(interaction: discord.Interaction, guild_id: str):
                     summary = "\n".join(lines)
                     logger.info(f"[update_names] 共更新 {len(updated)} 筆名稱：\n{summary}")
                     await interaction.followup.send(
-                        f"✨ 共更新 {len(updated)} 筆名稱：\n\n{summary}", ephemeral=True
+                        f"✨ 共更新 {len(updated)} 筆名稱 / Updated {len(updated)} names：\n\n{summary}", ephemeral=True
                     )
+
                 else:
                     logger.info("[update_names] 無任何名稱需要更新")
-                    await interaction.followup.send("✅ 沒有任何名稱需要更新", ephemeral=True)
+                    await interaction.followup.send("✅ 沒有任何名稱需要更新 / No name updates required.", ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"❌ 發生錯誤：{e}", ephemeral=True)

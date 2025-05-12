@@ -142,7 +142,7 @@ async def process_redeem(payload):
         received_lines = []
         for r in all_received:
             received_lines.append(f"{r['player_id']} ({r['message']})")
-        webhook_message += "📋 已領取過的 ID（未列入失敗）：\n" + "\n".join(received_lines)
+        webhook_message += "📋 已領取過的 ID（未列入失敗）：\n" + "\n".join(received_lines) + "\n"
 
     # 顯示失敗的 ID
     if all_fail:
@@ -152,9 +152,10 @@ async def process_redeem(payload):
             doc = db.collection("ids").document("global").collection("players").document(pid).get()
             name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
             failed_lines.append(f"{pid} ({name})")
-        webhook_message += "⚠️ 仍失敗的 ID：\n" + "\n".join(failed_lines)
+        webhook_message += "⚠️ 仍失敗的 ID：\n" + "\n".join(failed_lines) + "\n"
+
     else:
-        webhook_message += "✅ 所有失敗紀錄已成功兌換"
+        webhook_message += "✅ 所有失敗紀錄已成功兌換 / All failed records successfully redeemed"
 
     if os.getenv("DISCORD_WEBHOOK_URL"):
         try:
@@ -165,7 +166,7 @@ async def process_redeem(payload):
         except Exception as e:
             logger.warning(f"Webhook 發送失敗：{e}")
     else:
-        logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送")
+        logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送 / Webhook URL not set, skipping webhook")
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     debug_logs = []
@@ -250,7 +251,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                 await page.wait_for_selector(".name", timeout=5000)
                 await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
             except TimeoutError:
-                return await _package_result(page, False, "登入失敗（未成功進入兌換頁）", player_id, debug_logs, debug=debug)
+                return await _package_result(page, False, "登入失敗（未成功進入兌換頁） / Login failed (did not reach redeem page)", player_id, debug_logs, debug=debug)
 
             await page.fill('input[placeholder="請輸入兌換碼"]', code)
 
@@ -310,7 +311,7 @@ async def _redeem_once(player_id, code, debug_logs, redeem_retry, debug=False):
                     await page.wait_for_timeout(1000)
 
             log_entry(attempt, info="驗證碼三次辨識皆失敗，放棄兌換")
-            logger.info(f"[{player_id}] 最終失敗：驗證碼三次辨識皆失敗")
+            logger.info(f"[{player_id}] 最終失敗：驗證碼三次辨識皆失敗 / Final failure: CAPTCHA failed 3 times")
             return await _package_result(page, False, "驗證碼三次辨識皆失敗，放棄兌換", player_id, debug_logs, debug=debug)
 
     except Exception as e:
@@ -534,7 +535,7 @@ async def _refresh_captcha(page, player_id=None):
         try:
             original_bytes = await asyncio.wait_for(captcha_img.screenshot(), timeout=10)
         except Exception as e:
-            logger.warning(f"[{player_id}] captcha 原圖 screenshot timeout 或錯誤 → {e}")
+            logger.warning(f"[{player_id}] captcha 原圖 screenshot timeout 或錯誤 → {e} / original captcha screenshot timeout or error")
             return
         original_hash = hashlib.md5(original_bytes).hexdigest() if original_bytes else ""
 
@@ -579,7 +580,7 @@ async def _refresh_captcha(page, player_id=None):
             logger.info(f"[{player_id}] 刷新失敗：圖片內容未更新")
 
     except Exception as e:
-        logger.info(f"[{player_id}] Captcha 刷新例外：{str(e)}")
+        logger.info(f"[{player_id}] Captcha 刷新例外：{str(e)} / Refresh captcha exception: {str(e)}")
 
 async def _package_result(page, success, message, player_id, debug_logs, debug=False):
     result = {
@@ -653,7 +654,7 @@ def add_id():
 
         return jsonify({
             "success": True,
-            "message": f"已新增或更新 {player_id} 至 guild {guild_id}",
+            "message": f"已新增或更新 {player_id} 至 guild {guild_id} / Added or updated to guild {guild_id}",
             "name": player_name
         })
 
@@ -772,9 +773,9 @@ def redeem_submit():
             f"禮包碼：{code}\n"
         )
         if final_failed_ids:
-            webhook_message += "⚠️ 三次辨識失敗的 ID（請改用單人兌換）：\n" + "\n".join(final_failed_ids)
+            webhook_message += "⚠️ 三次辨識失敗的 ID（請改用/retry_failed）：\n" + "\n".join(final_failed_ids)
         else:
-            webhook_message += "✅ 無任何 ID 出現三次辨識失敗"
+            webhook_message += "✅ 無任何 ID 出現三次辨識失敗 / No ID failed 3 times"
 
         webhook_message += f"\n⌛ 執行時間：約 {time.time() - start_time:.1f} 秒"
 
@@ -793,7 +794,7 @@ def redeem_submit():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(process_all())
 
-    return jsonify({"message": "兌換已完成，Webhook 已送出（或已嘗試）"}), 200
+    return jsonify({"message": "兌換已完成，Webhook 已送出（或已嘗試） / Redemption completed, webhook sent (or attempted)"}), 200
 
 @app.route("/update_names_api", methods=["POST"])
 def update_names_api():
