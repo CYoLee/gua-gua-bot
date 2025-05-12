@@ -465,17 +465,18 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
         if lang.value == "en":
             content = (
                 "**GuaGuaBOT Help (English)**\n"
-                "`/add_id` - Add one or multiple player IDs (comma-separated)\n"
+                "`/add_id` - Add one or more player IDs (comma-separated)\n"
                 "`/remove_id` - Remove a player ID\n"
                 "`/list_ids` - List all saved player IDs\n"
                 "`/redeem_submit` - Submit a redeem code\n"
-                "`/add_notify` - Add reminders (support multiple dates/times)\n"
+                "`/retry_failed` - Retry failed ID redemptions\n"
+                "`/update_names` - Refresh and update all player ID names\n"
+                "`/add_notify` - Add reminders (supports multiple dates and times)\n"
                 "`/list_notify` - View reminder list\n"
                 "`/remove_notify` - Remove a reminder\n"
                 "`/edit_notify` - Edit a reminder\n"
-                "`/update_names` - Refresh and update all player ID names\n"
                 "`/help` - View the list of available commands\n"
-                "`Translation` - Mention the bot and reply to a message to auto-translate between Chinese and English, or use the 'Translate Message' context menu"
+                "`Translation` - Mention the bot and reply to a message to auto-translate, or use the right-click menu 'Translate Message'"
             )
         else:
             content = (
@@ -484,13 +485,14 @@ async def help_command(interaction: discord.Interaction, lang: app_commands.Choi
                 "`/remove_id` - 移除玩家 ID\n"
                 "`/list_ids` - 顯示所有已儲存的 ID\n"
                 "`/redeem_submit` - 提交兌換碼\n"
+                "`/retry_failed` - 重新兌換失敗的 ID\n"
+                "`/update_names` - 重新查詢並更新所有 ID 的角色名稱\n"
                 "`/add_notify` - 新增提醒（支援多個日期與時間）\n"
                 "`/list_notify` - 查看提醒列表\n"
                 "`/remove_notify` - 移除提醒\n"
                 "`/edit_notify` - 編輯提醒\n"
-                "`/update_names` - 重新查詢並更新所有 ID 的角色名稱\n"
                 "`/help` - 查看指令列表\n"
-                "`翻譯功能` - 標記機器人並回覆訊息即可自動翻譯中英文，或使用右鍵訊息選單『翻譯此訊息』"
+                "`翻譯功能` - 標記機器人並回覆訊息即可自動翻譯中英文，或使用右鍵選單「翻譯此訊息」"
             )
         await interaction.response.send_message(content, ephemeral=True)
     except Exception as e:
