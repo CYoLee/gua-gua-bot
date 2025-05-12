@@ -36,6 +36,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 REDEEM_API_URL = os.getenv("REDEEM_API_URL")
 redeem_submit_url = f"{REDEEM_API_URL}/redeem_submit"
+retry_failed_url = f"{REDEEM_API_URL}/retry_failed"
 tz = pytz.timezone("Asia/Taipei")
 LANG_CHOICES = [
     app_commands.Choice(name="繁體中文", value="zh"),
@@ -270,7 +271,7 @@ async def retry_failed(interaction: discord.Interaction, code: str):
         }
         # 呼叫後端 API（這裡直接進行兌換）
         async with aiohttp.ClientSession() as session:
-            async with session.post(REDEEM_API_URL, json=payload) as resp:
+            async with session.post(retry_failed_url, json=payload) as resp:
                 if resp.status == 200:
                     await interaction.followup.send(f"🎁 重新兌換 {len(player_ids)} 個失敗的 ID 已發送到後端進行處理", ephemeral=True)
                 else:
