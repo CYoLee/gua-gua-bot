@@ -72,6 +72,7 @@ RETRY_KEYWORDS = ["驗證碼錯誤", "驗證碼已過期", "伺服器繁忙", "�
 REDEEM_RETRIES = 3
 # === 主流程 ===
 async def process_redeem(payload):
+    start_time = time.time()
     code = payload.get("code")
     player_ids = payload.get("player_ids")
     debug = payload.get("debug", False)
@@ -153,9 +154,10 @@ async def process_redeem(payload):
             name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
             failed_lines.append(f"{pid} ({name})")
         webhook_message += "⚠️ 仍失敗的 ID：\n" + "\n".join(failed_lines) + "\n"
-
     else:
         webhook_message += "✅ 所有失敗紀錄已成功兌換 / All failed records successfully redeemed"
+
+    webhook_message += f"\n⌛ 執行時間：約 {time.time() - start_time:.1f} 秒"
 
     if os.getenv("DISCORD_WEBHOOK_URL"):
         try:
@@ -167,6 +169,7 @@ async def process_redeem(payload):
             logger.warning(f"Webhook 發送失敗：{e}")
     else:
         logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送 / Webhook URL not set, skipping webhook")
+
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     debug_logs = []
