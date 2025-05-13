@@ -318,7 +318,7 @@ async def add_notify(
                 count += 1
         await interaction.followup.send(f"✅ 已新增 / Added {count} 筆提醒", ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ 錯誤：{e}", ephemeral=True)
+        await interaction.followup.send(f"❌ 錯誤：{e} / Error: {e}", ephemeral=True)
 
 @tree.command(name="list_notify", description="查看提醒列表 / View reminder list")
 async def list_notify(interaction: discord.Interaction):
@@ -605,7 +605,7 @@ async def context_translate(interaction: discord.Interaction, message: discord.M
         await interaction.followup.send(f"⚠️ 翻譯失敗：{e}", ephemeral=True)
 
 @tree.command(name="update_names", description="重新查詢所有 ID 並更新名稱")
-@app_commands.describe(guild_id="請輸入要更新的 Discord 伺服器 ID")
+@app_commands.describe(guild_id="請輸入要更新的 Discord 伺服器 ID / Please enter the Discord server ID to update")
 async def update_names(interaction: discord.Interaction, guild_id: str):
     await interaction.response.defer(thinking=True, ephemeral=True)
 
@@ -631,7 +631,7 @@ async def update_names(interaction: discord.Interaction, guild_id: str):
                     )
 
                 else:
-                    logger.info("[update_names] 無任何名稱需要更新")
+                    logger.info(f"[update_names] 無任何名稱需要更新 / No names to update")
                     await interaction.followup.send("✅ 沒有任何名稱需要更新 / No name updates required.", ephemeral=True)
 
     except Exception as e:

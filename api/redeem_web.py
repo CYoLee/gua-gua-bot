@@ -580,7 +580,7 @@ async def _refresh_captcha(page, player_id=None):
                     logger.info(f"[{player_id}] 成功刷新驗證碼 (hash 第 {i+1} 次變化)")
                     return
         else:
-            logger.info(f"[{player_id}] 刷新失敗：圖片內容未更新")
+            logger.info(f"[{player_id}] 刷新失敗：圖片內容未更新 / Refresh failed: Captcha image did not update")
 
     except Exception as e:
         logger.info(f"[{player_id}] Captcha 刷新例外：{str(e)} / Refresh captcha exception: {str(e)}")
