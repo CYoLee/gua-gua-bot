@@ -209,45 +209,47 @@ async def list_ids(interaction: discord.Interaction):
 @app_commands.describe(code="要兌換的禮包碼", player_id="選填：指定兌換的玩家 ID（單人兌換）")
 async def redeem_submit(interaction: discord.Interaction, code: str, player_id: str = None):
     await interaction.response.send_message("🎁 兌換已開始處理 / Redemption started. 系統稍後會回報結果 / Result will be reported shortly.", ephemeral=True)
-    asyncio.create_task(trigger_backend_redeem(interaction, code, player_id))
+    if player_id:
+        asyncio.create_task(trigger_backend_redeem(interaction, code, [player_id]))
+    else:
+        asyncio.create_task(trigger_backend_redeem(interaction, code))
+
 
 async def get_player_ids(guild_id):
-    # 從 Firestore 獲取玩家 ID
     docs = db.collection("ids").document(guild_id).collection("players").stream()
     return [doc.id for doc in docs]
+
 
 async def trigger_backend_redeem(interaction: discord.Interaction, code: str, player_ids: list = None):
     guild_id = str(interaction.guild_id)
 
     if player_ids is None:
-        player_ids = await get_player_ids(guild_id)  # 添加一個方法來獲取 ID 清單
+        player_ids = await get_player_ids(guild_id)
 
     if not player_ids:
         await interaction.followup.send("⚠️ 沒有找到任何玩家 ID / No player ID found", ephemeral=True)
         return
 
     try:
-        # 構建 API 請求 payload
         payload = {
             "code": code,
             "player_ids": player_ids,
             "debug": False
         }
 
-        # 發送請求並等待回應
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.post(redeem_submit_url, json=payload, timeout=5) as resp:
                     if resp.status == 200:
-                        logger.info(f"[{guild_id}] 觸發後端兌換流程（未等待完成）")
+                        logger.info(f"[{guild_id}] ✅ 成功觸發後端兌換流程（未等待完成）")
                     else:
-                        logger.error(f"[{guild_id}] 發送兌換請求失敗，API 回傳錯誤：{resp.status}")
+                        logger.error(f"[{guild_id}] ❌ API 回傳錯誤狀態：{resp.status}")
             except (asyncio.TimeoutError, ClientError) as e:
-                logger.warning(f"[{guild_id}] 發送兌換請求超時或錯誤 / Request timeout or error. 將由 webhook 回報：{e}")
-                await interaction.followup.send(f"❌ 發送請求失敗 / Failed to send request. 錯誤信息 / Error:{str(e)}", ephemeral=True)
+                logger.warning(f"[{guild_id}] 發送請求超時 / Request timeout. 將由 webhook 回報：{e}")
+                # ❌ 移除這行，以免 Discord 顯示錯誤訊息：
+                # await interaction.followup.send(f"❌ 發送請求失敗 / Failed to send request. 錯誤信息 / Error:{str(e)}", ephemeral=True)
     except Exception as e:
         logger.exception(f"[Critical Error] trigger_backend_redeem 發生錯誤（guild_id: {guild_id}）")
-        await interaction.followup.send(f"❌ 觸發兌換流程錯誤 / Failed to trigger redemption:{e}", ephemeral=True)
 
 @tree.command(name="retry_failed", description="重新兌換失敗的 ID / Retry failed ID")
 @app_commands.describe(code="禮包碼 / Redeem code")
