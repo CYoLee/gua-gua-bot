@@ -662,6 +662,22 @@ def add_id():
                 "updated_at": datetime.utcnow()
             }, merge=True)
 
+        # ✅ 傳送 webhook 通知，防止惡意新增
+        if not existing_doc.exists:
+            webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
+            if webhook_url:
+                try:
+                    content = (
+                        f"📌 新增 ID 通知 / New ID Added\n"
+                        f"Guild ID: `{guild_id}`\n"
+                        f"Player ID: `{player_id}`\n"
+                        f"Name: `{player_name}`"
+                    )
+                    requests.post(webhook_url, json={"content": content})
+                    logger.info(f"[Webhook] 已發送新增 ID 通知")
+                except Exception as e:
+                    logger.warning(f"[Webhook] 發送新增 ID 通知失敗：{e}")
+
         return jsonify({
             "success": True,
             "message": f"已新增或更新 {player_id} 至 guild {guild_id} / Added or updated to guild {guild_id}",
