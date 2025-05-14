@@ -106,15 +106,19 @@ async def process_redeem(payload):
             else:
                 reason = r.get("reason")  # 確保 reason 獲得賦值
                 if "您已領取過該禮物" in reason:
-                    # 已領取過的 ID 不算真正的失敗，單獨統計並刪除失敗資料
                     all_received.append({
                         "player_id": r["player_id"],
                         "message": reason
                     })
-                    # 刪除該玩家的資料，因為他已領取過禮物
+                    # ✅ 寫入 success_redeems（避免再次兌換）
+                    db.collection("success_redeems").document(code).collection("players").document(r["player_id"]).set({
+                        "message": reason,
+                        "timestamp": datetime.utcnow()
+                    })
+                    # ❌ 刪除 failed_redeems
                     db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
-                    logger.info(f"[{r['player_id']}] 已領取過該禮物，無法再次領取，從 failed_redeems 中刪除。")
-                    continue  # 跳過該 ID，並且不進行刪除等操作
+                    logger.info(f"[{r['player_id']}] 已領取過該禮物，寫入 success 並刪除 failed_redeems。")
+                    continue
 
                 all_fail.append({
                     "player_id": r.get("player_id"),
@@ -760,9 +764,25 @@ def redeem_submit():
         # ✅ 濾除已兌換成功的 ID（避免浪費 2Captcha）
         success_docs = db.collection("success_redeems").document(code).collection("players").stream()
         already_redeemed_ids = {doc.id for doc in success_docs}
+
+        filtered_player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
+
         if already_redeemed_ids:
             logger.info(f"⏩ 已跳過 {len(already_redeemed_ids)} 筆已兌換成功的 ID")
         filtered_player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
+
+        if not filtered_player_ids:
+            logger.info("🎉 所有 ID 皆已兌換成功或已領取過，無需再處理")
+
+            if os.getenv("DISCORD_WEBHOOK_URL"):
+                try:
+                    resp = requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
+                        "content": f"🎉 所有 ID 皆已兌換成功或已領取過，無需再處理\n禮包碼：{code}"
+                    })
+                    logger.info(f"Webhook 發送結果：{resp.status_code} {resp.text}")
+                except Exception as e:
+                    logger.warning(f"Webhook 發送失敗：{e}")
+            return
 
         # 開始兌換處理
         for i in range(0, len(filtered_player_ids), MAX_BATCH_SIZE):
