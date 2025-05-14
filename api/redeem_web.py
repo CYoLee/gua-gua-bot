@@ -96,6 +96,13 @@ async def process_redeem(payload):
                     "message": r.get("message")
                 })
                 logger.info(f"[{r['player_id']}] ✅ 重新成功：{r.get('message')}")
+
+                # ✅ 寫入成功記錄（避免下次重複送出）
+                db.collection("success_redeems").document(code).collection("players").document(r["player_id"]).set({
+                    "message": r.get("message"),
+                    "timestamp": datetime.utcnow()
+                })
+
             else:
                 reason = r.get("reason")  # 確保 reason 獲得賦值
                 if "您已領取過該禮物" in reason:
@@ -734,6 +741,13 @@ def redeem_submit():
                 }, merge=True)
                 logger.info(f"[{pid}] 📌 自動新增至 Firestore：{name}")
 
+        # ✅ 濾除已兌換成功的 ID（避免浪費 2Captcha）
+        success_docs = db.collection("success_redeems").document(code).collection("players").stream()
+        already_redeemed_ids = {doc.id for doc in success_docs}
+        if already_redeemed_ids:
+            logger.info(f"⏩ 已跳過 {len(already_redeemed_ids)} 筆已兌換成功的 ID")
+        player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
+
         # 開始兌換處理
         for i in range(0, len(player_ids), MAX_BATCH_SIZE):
             batch = player_ids[i:i + MAX_BATCH_SIZE]
@@ -747,6 +761,11 @@ def redeem_submit():
                         "message": r.get("message")
                     })
                     logger.info(f"[{r['player_id']}] ✅ 成功：{r.get('message')}")
+                    # ✅ 寫入成功記錄（避免下次重複送出）
+                    db.collection("success_redeems").document(code).collection("players").document(r["player_id"]).set({
+                        "message": r.get("message"),
+                        "timestamp": datetime.utcnow()
+                    })
                 else:
                     all_fail.append({
                         "player_id": r.get("player_id"),
