@@ -762,11 +762,11 @@ def redeem_submit():
         already_redeemed_ids = {doc.id for doc in success_docs}
         if already_redeemed_ids:
             logger.info(f"⏩ 已跳過 {len(already_redeemed_ids)} 筆已兌換成功的 ID")
-        player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
+        filtered_player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
 
         # 開始兌換處理
-        for i in range(0, len(player_ids), MAX_BATCH_SIZE):
-            batch = player_ids[i:i + MAX_BATCH_SIZE]
+        for i in range(0, len(filtered_player_ids), MAX_BATCH_SIZE):
+            batch = filtered_player_ids[i:i + MAX_BATCH_SIZE]
             tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
             results = await asyncio.gather(*tasks)
             await asyncio.sleep(1)
