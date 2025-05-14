@@ -709,11 +709,11 @@ def redeem_submit():
     player_ids = data.get("player_ids")
     debug = data.get("debug", False)
 
-    if not code or not player_ids:
-        return jsonify({"success": False, "reason": "缺少 code 或 player_ids"}), 400
+    if not code:
+        return jsonify({"success": False, "reason": "缺少 code"}), 400
 
-    if not isinstance(player_ids, list):
-        return jsonify({"success": False, "reason": "player_ids 必須是列表"}), 400
+    if not isinstance(player_ids, list) or not player_ids:
+        return jsonify({"success": False, "reason": "缺少或無效的 player_ids（空或非 list）"}), 400
 
     MAX_BATCH_SIZE = 5
     start_time = time.time()
