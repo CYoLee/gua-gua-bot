@@ -809,6 +809,15 @@ def redeem_submit():
                         "timestamp": datetime.utcnow()
                     })
                 else:
+                    if "您已領取過該禮物" in (r.get("reason") or ""):
+                        db.collection("success_redeems").document(code).collection("players").document(r["player_id"]).set({
+                            "message": r.get("reason"),
+                            "timestamp": datetime.utcnow()
+                        })
+                        db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
+                        logger.info(f"[{r['player_id']}] 已領取過 → 記錄 success 並移除 failed_redeems / Already claimed → marked as success and removed from failed_redeems")
+                        continue  # ✅ 不需加入 fail 清單
+
                     all_fail.append({
                         "player_id": r.get("player_id"),
                         "reason": r.get("reason"),
