@@ -176,13 +176,14 @@ async def process_redeem(payload):
 
     # webhook 結果整理（只列出失敗者）
     duration = time.time() - start_time
+    skipped_count = len(player_ids) - len(filtered_player_ids)
     webhook_message = (
         f"🔁 Retry 兌換完成 / Retry Redemption Complete\n"
         f"🎟️ 禮包碼 / Giftcode：{code}\n"
         f"📊 統計 Summary：\n"
         f"✅ 成功筆數 / Success：{len(all_success)}\n"
         f"❌ 失敗筆數 / Failed：{len(all_fail)}\n"
-        f"📦 總重試人數 / Total Retried: {len(all_success) + len(all_fail)}\n\n"
+        f"⏩ 跳過人數 / Skipped：{skipped_count}\n\n"
     )
 
     if all_fail:
@@ -871,15 +872,20 @@ def redeem_submit():
                     })
 
         webhook_message = (
-            f"🎁 處理完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
+            f"🎁 兌換完成 / Redemption Completed\n"
             f"🎟️ 禮包碼 / Giftcode：{code}\n"
+            f"📊 統計 Summary：\n"
+            f"✅ 成功筆數 / Success：{len(all_success)}\n"
+            f"❌ 失敗筆數 / Failed：{len(all_fail)}\n"
+            f"⏩ 跳過人數 / Skipped：{len(already_redeemed_ids)}\n\n"
         )
         if final_failed_ids:
             webhook_message += "⚠️ 三次辨識失敗的 ID（請改用/retry_failed）：\n" + "\n".join(final_failed_ids)
         else:
             webhook_message += "✅ 無任何 ID 出現三次辨識失敗 / No ID failed 3 times"
 
-        webhook_message += f"\n⌛ 執行時間：約 {time.time() - start_time:.1f} 秒"
+        webhook_message += f"\n⌛ 執行時間：約 {time.time() - start_time:.1f} 秒\n"
+        webhook_message += f"Duration: approx. {time.time() - start_time:.1f} seconds"
 
         if os.getenv("DISCORD_WEBHOOK_URL"):
             try:
