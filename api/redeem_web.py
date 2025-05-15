@@ -78,109 +78,131 @@ async def process_redeem(payload):
     debug = payload.get("debug", False)
 
     MAX_BATCH_SIZE = 5
-    doc_ref_base = db.collection("ids")
     all_success = []
     all_fail = []
-    all_received = []  # 用來儲存已領取過的 ID
 
-    for i in range(0, len(player_ids), MAX_BATCH_SIZE):
-        batch = player_ids[i:i + MAX_BATCH_SIZE]
+    async def fetch_and_store_name(pid):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(locale="zh-TW")
+            page = await context.new_page()
+            name = "未知名稱"
+            for attempt in range(3):
+                try:
+                    await page.goto("https://wos-giftcode.centurygame.com/")
+                    await page.fill('input[type="text"]', pid)
+                    await page.click(".login_btn")
+                    await page.wait_for_selector('input[placeholder="請輸入兌換碼"]', timeout=5000)
+                    await page.wait_for_selector(".name", timeout=5000)
+                    name_el = await page.query_selector(".name")
+                    name = await name_el.inner_text() if name_el else "未知名稱"
+                    break
+                except:
+                    await page.wait_for_timeout(1000 + attempt * 500)
+            await browser.close()
+            return name
+
+    # 查缺 ID 並補上
+    doc_ref_base = db.collection("ids")
+    loop = asyncio.get_event_loop()
+    for pid in player_ids:
+        doc_ref = doc_ref_base.document("global").collection("players").document(pid)
+        if not doc_ref.get().exists:
+            name = loop.run_until_complete(fetch_and_store_name(pid))
+            doc_ref.set({
+                "name": name,
+                "updated_at": datetime.utcnow()
+            }, merge=True)
+            logger.info(f"[{pid}] 📌 已自動新增至資料庫：{name} / Auto-added to database: {name}")
+
+    # 排除已成功或已領取的
+    success_docs = db.collection("success_redeems").document(code).collection("players").stream()
+    already_redeemed_ids = {doc.id for doc in success_docs}
+    filtered_player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
+
+    logger.info(f"⏩ 已跳過 {len(already_redeemed_ids)} 筆已成功或已領取的 ID（共輸入 {len(player_ids)} 筆）")
+
+    if debug:
+        for pid in filtered_player_ids:
+            assert pid not in already_redeemed_ids, f"過濾失敗，{pid} 應已在 success_redeems 中"
+
+    if not filtered_player_ids:
+        logger.info("🎉 所有 ID 皆已兌換成功或已領取過，無需再處理")
+        if os.getenv("DISCORD_WEBHOOK_URL"):
+            try:
+                resp = requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
+                    "content": f"🎉 所有 ID 皆已兌換成功或已領取過，無需再處理\n禮包碼：{code}"
+                })
+                logger.info(f"Webhook 發送結果：{resp.status_code} {resp.text}")
+            except Exception as e:
+                logger.warning(f"Webhook 發送失敗：{e}")
+        return
+
+    # 執行兌換流程
+    for i in range(0, len(filtered_player_ids), MAX_BATCH_SIZE):
+        batch = filtered_player_ids[i:i + MAX_BATCH_SIZE]
         tasks = [run_redeem_with_retry(pid, code, debug=debug) for pid in batch]
         results = await asyncio.gather(*tasks)
         await asyncio.sleep(1)
 
         for r in results:
             if r.get("success"):
-                all_success.append({
-                    "player_id": r["player_id"],
-                    "message": r.get("message")
-                })
-                logger.info(f"[{r['player_id']}] ✅ 重新成功：{r.get('message')} / Redeemed again successfully: {r.get('message')}")
-
-                # ✅ 寫入成功記錄（避免下次重複送出）
+                all_success.append(r)
                 db.collection("success_redeems").document(code).collection("players").document(r["player_id"]).set({
                     "message": r.get("message"),
                     "timestamp": datetime.utcnow()
                 })
-
             else:
-                reason = r.get("reason")  # 確保 reason 獲得賦值
-                if "您已領取過該禮物" in reason:
-                    all_received.append({
-                        "player_id": r["player_id"],
-                        "message": reason
-                    })
-                    # ✅ 寫入 success_redeems（避免再次兌換）
+                if any(msg in (r.get("reason") or "") for msg in ["您已領取過該禮物", "超出兌換時間"]):
                     db.collection("success_redeems").document(code).collection("players").document(r["player_id"]).set({
-                        "message": reason,
+                        "message": r.get("reason"),
                         "timestamp": datetime.utcnow()
                     })
-                    # ❌ 刪除 failed_redeems
                     db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
-                    logger.info(f"[{r['player_id']}] 已領取過該禮物，寫入 success 並刪除 failed_redeems。/ Already claimed, marked as success and removed from failed_redeems.")
+                    logger.info(f"[{r['player_id']}] {r.get('reason')} → 記錄 success 並移除 failed_redeems / Marked as success and removed from failed_redeems")
                     continue
 
-                all_fail.append({
-                    "player_id": r.get("player_id"),
-                    "reason": reason
-                })
-                logger.warning(f"[{r['player_id']}] ❌ 重新失敗：{reason} / Retry failed: {reason}")
+                all_fail.append(r)
+                logger.warning(f"[{r['player_id']}] ❌ 失敗：{r.get('reason')}")
 
-                # 特定錯誤訊息需刪除資料
-                if "您已領取過該禮物" not in reason and "兌換成功，請在信件中領取獎勳" not in reason:
-                    db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
-                    logger.info(f"[{r['player_id']}] 資料已刪除：已領取過或完成兌換，理由：{reason} / Data removed: Already claimed or redeemed, reason: {reason}")
-
-                # 針對其他特殊錯誤進行更新
                 if r.get("reason") in ["驗證碼三次辨識皆失敗", "Timeout：單人兌換超過 90 秒"]:
                     doc = doc_ref_base.document("global").collection("players").document(r["player_id"]).get()
                     name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
                     db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).set({
                         "name": name,
                         "reason": r.get("reason"),
-                        "updated_at": datetime.datetime.now(datetime.timezone.utc)  # 修正為 UTC 時間
+                        "updated_at": datetime.utcnow()
                     })
-                else:
-                    # 若為其他失敗情況，則刪除該玩家資料
-                    db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
 
-    # ✅ 全部處理完才發送 webhook
+    # webhook 結果整理（只列出失敗者）
+    duration = time.time() - start_time
     webhook_message = (
-        f"🔁 重新兌換完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
-        f"禮包碼：{code}\n"
+        f"🔁 Retry 兌換完成 / Retry Redemption Complete\n"
+        f"🎟️ 禮包碼 / Giftcode：{code}\n"
+        f"📊 統計 Summary：\n"
+        f"✅ 成功筆數 / Success：{len(all_success)}\n"
+        f"❌ 失敗筆數 / Failed：{len(all_fail)}\n"
+        f"📦 總重試人數 / Total Retried: {len(all_success) + len(all_fail)}\n\n"
     )
-    # 顯示已領取過的 ID
-    if all_received:
-        received_lines = []
-        for r in all_received:
-            received_lines.append(f"{r['player_id']} ({r['message']})")
-        webhook_message += "📋 已領取過的 ID（未列入失敗）：\n" + "\n".join(received_lines) + "\n"
 
-    # 顯示失敗的 ID
     if all_fail:
-        failed_lines = []
+        webhook_message += "⚠️ 重試仍失敗的 ID：\n"
+        webhook_message += "Failed IDs:\n"
         for r in all_fail:
             pid = r["player_id"]
             doc = db.collection("ids").document("global").collection("players").document(pid).get()
-            name = doc.to_dict().get("name", "未知") if doc.exists else "未知"
-            failed_lines.append(f"{pid} ({name})")
-        webhook_message += "⚠️ 仍失敗的 ID：\n" + "\n".join(failed_lines) + "\n"
-    else:
-        webhook_message += "✅ 所有失敗紀錄已成功兌換 / All failed records successfully redeemed"
+            name = doc.to_dict().get("name", "未知名稱") if doc.exists else "未知名稱"
+            webhook_message += f"- {pid} ({name})\n"
 
-    webhook_message += f"\n⌛ 執行時間：約 {time.time() - start_time:.1f} 秒"
+    webhook_message += f"\n⌛ 執行時間：約 {duration:.1f} 秒\n"
+    webhook_message += f"Duration: approx. {duration:.1f} seconds"
 
     if os.getenv("DISCORD_WEBHOOK_URL"):
         try:
-            resp = requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={
-                "content": webhook_message
-            })
+            resp = requests.post(os.getenv("DISCORD_WEBHOOK_URL"), json={"content": webhook_message})
             logger.info(f"Webhook 發送結果：{resp.status_code} {resp.text}")
         except Exception as e:
             logger.warning(f"Webhook 發送失敗：{e}")
-    else:
-        logger.warning("DISCORD_WEBHOOK_URL 未設定，跳過 webhook 發送 / Webhook URL not set, skipping webhook")
-
 
 async def run_redeem_with_retry(player_id, code, debug=False):
     debug_logs = []
@@ -668,19 +690,26 @@ def add_id():
                 "updated_at": datetime.utcnow()
             }, merge=True)
 
-        # ✅ 傳送 webhook 通知：新增或名稱變更時發送
+        # ✅ 傳送 webhook 通知（雙語）Add or update webhook
         webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
         if webhook_url and (not existing_doc.exists or name_changed):
             try:
-                status_text = "新增 ID" if not existing_doc.exists else "名稱更新"
-                content = (
-                    f"📌 {status_text}通知 / {status_text} Notification\n"
-                    f"Guild ID: `{guild_id}`\n"
-                    f"Player ID: `{player_id}`\n"
-                    f"Name: `{player_name}`"
-                )
+                if not existing_doc.exists:
+                    content = (
+                        f"📌 新增 ID 通知 / Add ID Notification\n"
+                        f"🆔 Guild ID: `{guild_id}`\n"
+                        f"👤 Player ID: `{player_id}`\n"
+                        f"📛 Name: `{player_name}`"
+                    )
+                else:
+                    content = (
+                        f"🔁 名稱更新通知 / Name Updated\n"
+                        f"🆔 Guild ID: `{guild_id}`\n"
+                        f"👤 Player ID: `{player_id}`\n"
+                        f"📛 New Name: `{player_name}`"
+                    )
                 requests.post(webhook_url, json={"content": content})
-                logger.info(f"[Webhook] 已發送 {status_text} 通知")
+                logger.info(f"[Webhook] 已發送新增或更新通知")
             except Exception as e:
                 logger.warning(f"[Webhook] 發送通知失敗：{e}")
 
@@ -763,7 +792,7 @@ def redeem_submit():
                     "name": name,
                     "updated_at": datetime.utcnow()
                 }, merge=True)
-                logger.info(f"[{r['player_id']}] 📌 自動新增至 Firestore：{name} / Auto-added to Firestore: {name}")
+                logger.info(f"[{pid}] 📌 已自動新增至資料庫：{name} / Auto-added to database: {name}")
 
         # ✅ 濾除已兌換成功或已領取過的 ID（避免浪費 2Captcha）
         success_docs = db.collection("success_redeems").document(code).collection("players").stream()
@@ -843,7 +872,7 @@ def redeem_submit():
 
         webhook_message = (
             f"🎁 處理完成：成功 {len(all_success)} 筆，失敗 {len(all_fail)} 筆\n"
-            f"禮包碼：{code}\n"
+            f"🎟️ 禮包碼 / Giftcode：{code}\n"
         )
         if final_failed_ids:
             webhook_message += "⚠️ 三次辨識失敗的 ID（請改用/retry_failed）：\n" + "\n".join(final_failed_ids)
@@ -913,20 +942,21 @@ def update_names_api():
                         })
                         updated.append({"player_id": pid, "name": name})
 
-                        # ✅ webhook 發送（名稱更新）
+                        # ✅ webhook 發送（名稱更新，雙語）
                         webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
                         if webhook_url:
                             try:
                                 content = (
                                     f"🔁 名稱更新通知 / Name Updated\n"
-                                    f"Guild ID: `{guild_id}`\n"
-                                    f"Player ID: `{pid}`\n"
-                                    f"Name: `{name}`"
+                                    f"🆔 Guild ID: `{guild_id}`\n"
+                                    f"👤 Player ID: `{pid}`\n"
+                                    f"📛 New Name: `{name}`"
                                 )
                                 requests.post(webhook_url, json={"content": content})
                                 logger.info(f"[Webhook] 已發送名稱更新通知")
                             except Exception as e:
                                 logger.warning(f"[Webhook] 發送通知失敗：{e}")
+
                     else:
                         logger.info(f"[{pid}] 保留原名稱（未更新）：{existing_name}")
 
