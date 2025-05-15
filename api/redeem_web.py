@@ -95,7 +95,7 @@ async def process_redeem(payload):
                     "player_id": r["player_id"],
                     "message": r.get("message")
                 })
-                logger.info(f"[{r['player_id']}] ✅ 重新成功：{r.get('message')}")
+                logger.info(f"[{r['player_id']}] ✅ 重新成功：{r.get('message')} / Redeemed again successfully: {r.get('message')}")
 
                 # ✅ 寫入成功記錄（避免下次重複送出）
                 db.collection("success_redeems").document(code).collection("players").document(r["player_id"]).set({
@@ -117,19 +117,19 @@ async def process_redeem(payload):
                     })
                     # ❌ 刪除 failed_redeems
                     db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
-                    logger.info(f"[{r['player_id']}] 已領取過該禮物，寫入 success 並刪除 failed_redeems。")
+                    logger.info(f"[{r['player_id']}] 已領取過該禮物，寫入 success 並刪除 failed_redeems。/ Already claimed, marked as success and removed from failed_redeems.")
                     continue
 
                 all_fail.append({
                     "player_id": r.get("player_id"),
                     "reason": reason
                 })
-                logger.warning(f"[{r['player_id']}] ❌ 重新失敗：{reason}")
+                logger.warning(f"[{r['player_id']}] ❌ 重新失敗：{reason} / Retry failed: {reason}")
 
                 # 特定錯誤訊息需刪除資料
                 if "您已領取過該禮物" not in reason and "兌換成功，請在信件中領取獎勳" not in reason:
                     db.collection("failed_redeems").document(code).collection("players").document(r["player_id"]).delete()
-                    logger.info(f"[{r['player_id']}] 資料已刪除：已領取過或完成兌換，理由：{reason}")
+                    logger.info(f"[{r['player_id']}] 資料已刪除：已領取過或完成兌換，理由：{reason} / Data removed: Already claimed or redeemed, reason: {reason}")
 
                 # 針對其他特殊錯誤進行更新
                 if r.get("reason") in ["驗證碼三次辨識皆失敗", "Timeout：單人兌換超過 90 秒"]:
@@ -626,7 +626,7 @@ def add_id():
         player_id = data.get("player_id")
 
         if not guild_id or not player_id:
-            return jsonify({"success": False, "reason": "缺少 guild_id 或 player_id"}), 400
+            return jsonify({"success": False, "reason": "缺少 guild_id 或 player_id / Missing guild_id or player_id"}), 400
 
         async def fetch_name():
             async with async_playwright() as p:
@@ -660,27 +660,29 @@ def add_id():
         existing_doc = ref.get()
         existing_name = existing_doc.to_dict().get("name") if existing_doc.exists else None
 
-        if existing_name != player_name:
+        name_changed = existing_name != player_name
+
+        if name_changed:
             ref.set({
                 "name": player_name,
                 "updated_at": datetime.utcnow()
             }, merge=True)
 
-        # ✅ 傳送 webhook 通知，防止惡意新增
-        if not existing_doc.exists:
-            webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
-            if webhook_url:
-                try:
-                    content = (
-                        f"📌 新增 ID 通知 / New ID Added\n"
-                        f"Guild ID: `{guild_id}`\n"
-                        f"Player ID: `{player_id}`\n"
-                        f"Name: `{player_name}`"
-                    )
-                    requests.post(webhook_url, json={"content": content})
-                    logger.info(f"[Webhook] 已發送新增 ID 通知")
-                except Exception as e:
-                    logger.warning(f"[Webhook] 發送新增 ID 通知失敗：{e}")
+        # ✅ 傳送 webhook 通知：新增或名稱變更時發送
+        webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
+        if webhook_url and (not existing_doc.exists or name_changed):
+            try:
+                status_text = "新增 ID" if not existing_doc.exists else "名稱更新"
+                content = (
+                    f"📌 {status_text}通知 / {status_text} Notification\n"
+                    f"Guild ID: `{guild_id}`\n"
+                    f"Player ID: `{player_id}`\n"
+                    f"Name: `{player_name}`"
+                )
+                requests.post(webhook_url, json={"content": content})
+                logger.info(f"[Webhook] 已發送 {status_text} 通知")
+            except Exception as e:
+                logger.warning(f"[Webhook] 發送通知失敗：{e}")
 
         return jsonify({
             "success": True,
@@ -689,6 +691,7 @@ def add_id():
         })
 
     except Exception as e:
+        # 發生例外錯誤 / Exception occurred
         return jsonify({"success": False, "reason": str(e)}), 500
 
 @app.route("/list_ids", methods=["GET"])
@@ -696,7 +699,7 @@ def list_ids():
     try:
         guild_id = request.args.get("guild_id")
         if not guild_id:
-            return jsonify({"success": False, "reason": "缺少 guild_id"}), 400
+            return jsonify({"success": False, "reason": "缺少 guild_id / Missing guild_id"}), 400
 
         docs = db.collection("ids").document(guild_id).collection("players").stream()
         players = [{"id": doc.id, **doc.to_dict()} for doc in docs]
@@ -704,6 +707,7 @@ def list_ids():
         return jsonify({"success": True, "players": players})
 
     except Exception as e:
+        # 發生例外錯誤 / Exception occurred
         return jsonify({"success": False, "reason": str(e)}), 500
 
 @app.route("/redeem_submit", methods=["POST"])
@@ -714,10 +718,10 @@ def redeem_submit():
     debug = data.get("debug", False)
 
     if not code:
-        return jsonify({"success": False, "reason": "缺少 code"}), 400
+        return jsonify({"success": False, "reason": "缺少 code / Missing code"}), 400
 
     if not isinstance(player_ids, list) or not player_ids:
-        return jsonify({"success": False, "reason": "缺少或無效的 player_ids（空或非 list）"}), 400
+        return jsonify({"success": False, "reason": "缺少或無效的 player_ids（空或非 list） / Missing or invalid player_ids (empty or not a list)"}), 400
 
     MAX_BATCH_SIZE = 5
     start_time = time.time()
@@ -759,17 +763,19 @@ def redeem_submit():
                     "name": name,
                     "updated_at": datetime.utcnow()
                 }, merge=True)
-                logger.info(f"[{pid}] 📌 自動新增至 Firestore：{name}")
+                logger.info(f"[{r['player_id']}] 📌 自動新增至 Firestore：{name} / Auto-added to Firestore: {name}")
 
-        # ✅ 濾除已兌換成功的 ID（避免浪費 2Captcha）
+        # ✅ 濾除已兌換成功或已領取過的 ID（避免浪費 2Captcha）
         success_docs = db.collection("success_redeems").document(code).collection("players").stream()
         already_redeemed_ids = {doc.id for doc in success_docs}
 
         filtered_player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
+        logger.info(f"⏩ 已跳過 {len(already_redeemed_ids)} 筆已成功或已領取的 ID（共輸入 {len(player_ids)} 筆）")
 
-        if already_redeemed_ids:
-            logger.info(f"⏩ 已跳過 {len(already_redeemed_ids)} 筆已兌換成功的 ID")
-        filtered_player_ids = [pid for pid in player_ids if pid not in already_redeemed_ids]
+        # 防呆檢查，確保過濾邏輯正確
+        if debug:
+            for pid in filtered_player_ids:
+                assert pid not in already_redeemed_ids, f"過濾失敗，{pid} 應已在 success_redeems 中"
 
         if not filtered_player_ids:
             logger.info("🎉 所有 ID 皆已兌換成功或已領取過，無需再處理")
@@ -860,7 +866,7 @@ def update_names_api():
         data = request.json
         guild_id = data.get("guild_id")
         if not guild_id:
-            return jsonify({"success": False, "reason": "缺少 guild_id"}), 400
+            return jsonify({"success": False, "reason": "缺少 guild_id / Missing guild_id"}), 400
 
         player_ids = [doc.id for doc in db.collection("ids").document(guild_id).collection("players").stream()]
         updated = []
@@ -883,7 +889,7 @@ def update_names_api():
                             await page.wait_for_selector(".name", timeout=5000)
                             name_el = await page.query_selector(".name")
                             name = await name_el.inner_text() if name_el else "未知名稱"
-                            break  # 有成功取得名稱就中止重試
+                            break
                         except:
                             await page.wait_for_timeout(1000 + attempt * 500)
 
@@ -891,13 +897,27 @@ def update_names_api():
                     existing_doc = doc_ref.get()
                     existing_name = existing_doc.to_dict().get("name") if existing_doc.exists else None
 
-                    if name != "未知名稱":
-                        if existing_name != name or existing_name in [None, "未知名稱"]:
-                            doc_ref.update({
-                                "name": name,
-                                "updated_at": datetime.utcnow()
-                            })
-                            updated.append({"player_id": pid, "name": name})
+                    if name != "未知名稱" and (existing_name != name or existing_name in [None, "未知名稱"]):
+                        doc_ref.update({
+                            "name": name,
+                            "updated_at": datetime.utcnow()
+                        })
+                        updated.append({"player_id": pid, "name": name})
+
+                        # ✅ webhook 發送（名稱更新）
+                        webhook_url = os.getenv("ADD_ID_WEBHOOK_URL")
+                        if webhook_url:
+                            try:
+                                content = (
+                                    f"🔁 名稱更新通知 / Name Updated\n"
+                                    f"Guild ID: `{guild_id}`\n"
+                                    f"Player ID: `{pid}`\n"
+                                    f"Name: `{name}`"
+                                )
+                                requests.post(webhook_url, json={"content": content})
+                                logger.info(f"[Webhook] 已發送名稱更新通知")
+                            except Exception as e:
+                                logger.warning(f"[Webhook] 發送通知失敗：{e}")
                     else:
                         logger.info(f"[{pid}] 保留原名稱（未更新）：{existing_name}")
 
@@ -914,6 +934,7 @@ def update_names_api():
         })
 
     except Exception as e:
+        # 發生例外錯誤 / Exception occurred
         return jsonify({"success": False, "reason": str(e)}), 500
 
 @app.route("/retry_failed", methods=["POST"])
@@ -930,7 +951,7 @@ def retry_failed():
     player_ids = [doc.id for doc in failed_docs]
 
     if not player_ids:
-        return jsonify({"success": False, "reason": f"找不到 failed_redeems 清單：{code}"}), 404
+        return jsonify({"success": False, "reason": f"找不到 failed_redeems 清單：{code} / Cannot find failed_redeems list for code: {code}"}), 404
 
     # 呼叫現有流程
     try:
@@ -945,6 +966,7 @@ def retry_failed():
         loop.run_until_complete(process_redeem(payload))
         return jsonify({"success": True, "message": f"已針對 {len(player_ids)} 筆失敗紀錄重新兌換"}), 200
     except Exception as e:
+        # 發生例外錯誤 / Exception occurred
         return jsonify({"success": False, "reason": str(e)}), 500
 
 
