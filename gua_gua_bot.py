@@ -21,6 +21,22 @@ from discord.ext import commands, tasks
 from datetime import datetime, timedelta
 from firebase_admin import credentials, firestore
 from aiohttp import ClientError, ClientTimeout
+from flask import Flask
+from threading import Thread
+
+app = Flask(__name__)
+
+@app.route("/")
+def health_check():
+    return "Bot is running!", 200
+
+def run_http_server():
+    import os
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# 啟動 HTTP server（非同步執行）
+Thread(target=run_http_server).start()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -1014,7 +1014,6 @@ def retry_failed():
         # 發生例外錯誤 / Exception occurred
         return jsonify({"success": False, "reason": str(e)}), 500
 
-
 @app.route("/")
 def health():
     return "Worker ready for redeeming!"
